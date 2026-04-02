@@ -78,7 +78,8 @@ function updateWranglerJsonc() {
 
 function runSetupCommands() {
     const commands = [
-    "bun add nanoid@^5.0.0"
+    "bun add nanoid@^5.0.0",
+    "bun add nanoid"
 ];
     
     if (commands.length === 0) {
