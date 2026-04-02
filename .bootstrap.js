@@ -80,7 +80,7 @@ function runSetupCommands() {
     const commands = [
     "bun add nanoid@^5.0.0",
     "bun add nanoid",
-    "bun add recharts",
+    "bun add recharts lucide-react date-fns framer-motion zustand nanoid clsx tailwind-merge",
     "bun add lucide-react clsx tailwind-merge"
 ];
     
