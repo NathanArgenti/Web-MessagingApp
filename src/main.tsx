@@ -12,6 +12,7 @@ import { HomePage } from '@/pages/HomePage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AgentDashboard } from '@/pages/AgentDashboard';
 import { TenantAdmin } from '@/pages/TenantAdmin';
+import { WPIntegration } from '@/pages/WPIntegration';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { Toaster } from 'sonner';
 const queryClient = new QueryClient({
@@ -39,6 +40,15 @@ const router = createBrowserRouter([
     element: (
       <AuthGuard roles={['tenant_admin', 'superadmin']}>
         <TenantAdmin />
+      </AuthGuard>
+    ),
+    errorElement: <RouteErrorBoundary />,
+  },
+  {
+    path: "/admin/integration",
+    element: (
+      <AuthGuard roles={['tenant_admin', 'superadmin']}>
+        <WPIntegration />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,

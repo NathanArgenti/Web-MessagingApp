@@ -3,11 +3,10 @@ import {
   LayoutDashboard,
   Settings,
   Users,
-  MessageSquare,
-  ShieldCheck,
   LogOut,
   ChevronDown,
-  Activity
+  Activity,
+  Code2
 } from "lucide-react";
 import {
   SidebarProvider,
@@ -29,9 +28,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/lib/store";
 import { useNavigate, Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const userRole = useAuthStore(s => s.user?.role);
   const userName = useAuthStore(s => s.user?.name);
@@ -53,7 +54,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const currentTenantName = availableTenants.find(t => t.id === selectedTenantId)?.name || tenantName || 'Mercury';
   const navItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/agent', roles: ['agent', 'tenant_admin', 'superadmin'] },
-    { label: 'Tenant Settings', icon: Settings, path: '/admin', roles: ['tenant_admin', 'superadmin'] },
+    { label: 'Settings', icon: Settings, path: '/admin', roles: ['tenant_admin', 'superadmin'] },
+    { label: 'WordPress', icon: Code2, path: '/admin/integration', roles: ['tenant_admin', 'superadmin'] },
   ];
   return (
     <SidebarProvider>
@@ -62,7 +64,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
           <div className="w-8 h-8 bg-cyan-600 rounded flex items-center justify-center text-white font-bold shrink-0">M</div>
           <div className="flex flex-col overflow-hidden group-data-[collapsible=icon]:hidden">
             <span className="text-sm font-bold truncate max-w-[150px]">Mercury</span>
-            <span className="text-[10px] text-muted-foreground uppercase font-bold">Messaging Engine</span>
+            <span className="text-[10px] text-muted-foreground uppercase font-bold text-xs">Messaging Engine</span>
           </div>
         </SidebarHeader>
         <SidebarContent>

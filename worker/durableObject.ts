@@ -1,8 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
-import type { 
-    User, Tenant, Queue, Conversation, Message, PresenceStatus, 
+import type {
+    User, Tenant, Queue, Conversation, Message, PresenceStatus,
     PublicConfig, SystemEvent, EventType, ConversationStatus,
-    OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint
+    OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite
 } from '@shared/types';
 import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
@@ -14,25 +14,37 @@ export class GlobalDurableObject extends DurableObject {
     }
     async seedDatabase(): Promise<boolean> {
         const queues: Queue[] = [
-            { id: 'q1', tenantId: 't1', name: 'General Support' },
-            { id: 'q2', tenantId: 't1', name: 'Sales' }
+            { id: 'q1', tenantId: 't1', name: 'General Support', priority: 1, capacityMax: 10, isDeleted: false },
+            { id: 'q2', tenantId: 't1', name: 'Sales', priority: 2, capacityMax: 5, isDeleted: false }
         ];
         const tenants: Tenant[] = [
             {
                 id: 't1',
                 name: 'Acme Corp',
-                siteKey: 'acme-123',
-                branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome to Acme Support!' },
+                sites: [{ id: 's1', name: 'Main Site', key: 'acme-123', defaultQueueId: 'q1' }],
+                branding: { 
+                  primaryColor: '#06B6D4', 
+                  welcomeMessage: 'Welcome to Acme Support!',
+                  widgetPosition: 'bottom-right',
+                  themePreset: 'modern'
+                },
                 queues: [queues[0], queues[1]],
-                workflows: []
+                workflows: [],
+                authPolicy: { allowLocalAuth: true }
             },
             {
                 id: 't2',
                 name: 'Globex',
-                siteKey: 'globex-456',
-                branding: { primaryColor: '#F38020', welcomeMessage: 'How can Globex help today?' },
+                sites: [{ id: 's2', name: 'Global Portal', key: 'globex-456' }],
+                branding: { 
+                  primaryColor: '#F38020', 
+                  welcomeMessage: 'How can Globex help today?',
+                  widgetPosition: 'bottom-right',
+                  themePreset: 'glass'
+                },
                 queues: [],
-                workflows: []
+                workflows: [],
+                authPolicy: { allowLocalAuth: true }
             }
         ];
         const users: User[] = [
@@ -42,8 +54,80 @@ export class GlobalDurableObject extends DurableObject {
         ];
         await this.setStorage('tenants', tenants);
         await this.setStorage('users', users);
-        await this.setStorage('queues', queues);
         return true;
+    }
+    async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        for (const tenant of tenants) {
+            const site = tenant.sites?.find(s => s.key === siteKey);
+            if (site) {
+                return {
+                    tenantId: tenant.id,
+                    name: tenant.name,
+                    branding: tenant.branding,
+                    queues: (tenant.queues || [])
+                        .filter(q => !q.isDeleted)
+                        .map(q => ({ id: q.id, name: q.name, priority: q.priority || 0 }))
+                        .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+                };
+            }
+        }
+        return null;
+    }
+    async createVisitorConversation(siteKey: string, queueId: string, contact: { name: string, email?: string }): Promise<Conversation | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        let targetTenant: Tenant | null = null;
+        let targetSite: TenantSite | null = null;
+        for (const t of tenants) {
+            const s = t.sites?.find(site => site.key === siteKey);
+            if (s) {
+                targetTenant = t;
+                targetSite = s;
+                break;
+            }
+        }
+        if (!targetTenant) return null;
+        const availableQueues = targetTenant.queues.filter(q => !q.isDeleted);
+        let finalQueue = availableQueues.find(q => q.id === queueId);
+        if (!finalQueue) {
+            finalQueue = availableQueues.find(q => q.id === targetSite?.defaultQueueId) || availableQueues[0];
+        }
+        if (!finalQueue) return null;
+        const conversationsKey = `tenant:${targetTenant.id}:conversations`;
+        const existingConvs = (await this.getStorage<Conversation[]>(conversationsKey)) || [];
+        const activeInQueue = existingConvs.filter(c => c.queueId === finalQueue?.id && c.status !== 'ended').length;
+        if (finalQueue.capacityMax && activeInQueue >= finalQueue.capacityMax) {
+            return null; // Capacity reached
+        }
+        const newConv: Conversation = {
+            id: nanoid(),
+            tenantId: targetTenant.id,
+            queueId: finalQueue.id,
+            status: 'unassigned',
+            contactName: contact.name,
+            contactEmail: contact.email,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        existingConvs.push(newConv);
+        await this.setStorage(conversationsKey, existingConvs);
+        const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
+        index[newConv.id] = { tenantId: targetTenant.id, status: 'unassigned' };
+        await this.setStorage('conversations_index', index);
+        await this.emitEvent(targetTenant.id, 'conversation.started', newConv);
+        return newConv;
+    }
+    async getTenantAgents(tenantId: string): Promise<User[]> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        return users.filter(u => u.tenantId === tenantId && (u.role === 'agent' || u.role === 'tenant_admin'));
+    }
+    async updateTenantSettings(tenantId: string, settings: Partial<Tenant>): Promise<Tenant | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const idx = tenants.findIndex(t => t.id === tenantId);
+        if (idx === -1) return null;
+        tenants[idx] = { ...tenants[idx], ...settings };
+        await this.setStorage('tenants', tenants);
+        return tenants[idx];
     }
     async emitEvent(tenantId: string, type: EventType, payload: any): Promise<void> {
         const outbox = (await this.getStorage<SystemEvent[]>('outbox')) || [];
@@ -65,7 +149,7 @@ export class GlobalDurableObject extends DurableObject {
         for (const event of outbox.filter(e => !e.processed)) {
             const tenant = tenants.find(t => t.id === event.tenantId);
             if (tenant) {
-                const workflows = tenant.workflows.filter(w => w.eventType === event.type && w.active);
+                const workflows = tenant.workflows?.filter(w => w.eventType === event.type && w.active) || [];
                 for (const wf of workflows) {
                     console.log(`[WORKFLOW] Triggered: ${wf.name} | Action: ${wf.actionType} | Target: ${wf.targetUrl}`);
                 }
@@ -74,17 +158,11 @@ export class GlobalDurableObject extends DurableObject {
         }
         await this.setStorage('outbox', outbox.filter(e => !e.processed));
     }
-    // OFFLINE REQUESTS
     async getOfflineRequests(tenantId: string): Promise<OfflineRequest[]> {
         return (await this.getStorage<OfflineRequest[]>(`tenant:${tenantId}:offline_requests`)) || [];
     }
     async createOfflineRequest(req: Omit<OfflineRequest, 'id' | 'createdAt' | 'status'>): Promise<OfflineRequest> {
-        const newReq: OfflineRequest = {
-            ...req,
-            id: nanoid(),
-            status: 'pending',
-            createdAt: Date.now()
-        };
+        const newReq: OfflineRequest = { ...req, id: nanoid(), status: 'pending', createdAt: Date.now() };
         const key = `tenant:${req.tenantId}:offline_requests`;
         const existing = await this.getOfflineRequests(req.tenantId);
         existing.push(newReq);
@@ -96,92 +174,31 @@ export class GlobalDurableObject extends DurableObject {
         const requests = await this.getOfflineRequests(tenantId);
         const idx = requests.findIndex(r => r.id === requestId);
         if (idx === -1) return false;
-        requests[idx] = { 
-            ...requests[idx], 
-            status: 'dispatched', 
-            dispatchTimestamp: Date.now(), 
-            dispatchedBy: agentName 
-        };
+        requests[idx] = { ...requests[idx], status: 'dispatched', dispatchTimestamp: Date.now(), dispatchedBy: agentName };
         await this.setStorage(key, requests);
         return true;
     }
-    // ANALYTICS
     async getSystemMetrics(tenantId: string): Promise<SystemMetrics> {
         const conversations = (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
         const users = (await this.getStorage<User[]>('users')) || [];
         const activeAgents = users.filter(u => u.tenantId === tenantId && u.isOnline).length;
-        // Mocking hourly volume for chart demo
-        const hourlyVolume: MetricPoint[] = Array.from({ length: 24 }).map((_, i) => ({
-            timestamp: `${i}:00`,
-            value: Math.floor(Math.random() * 20)
-        }));
-        return {
-            hourlyMessageVolume: hourlyVolume,
-            avgResponseTime: 45, // Static mock
-            resolutionRate: 88, // Static mock
-            activeAgents,
-            totalConvs: conversations.length
-        };
+        const hourlyVolume: MetricPoint[] = Array.from({ length: 24 }).map((_, i) => ({ timestamp: `${i}:00`, value: Math.floor(Math.random() * 20) }));
+        return { hourlyMessageVolume: hourlyVolume, avgResponseTime: 45, resolutionRate: 88, activeAgents, totalConvs: conversations.length };
     }
     async getGlobalMetrics(): Promise<GlobalMetrics> {
         const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
         const users = (await this.getStorage<User[]>('users')) || [];
-        return {
-            totalTenants: tenants.length,
-            totalMessages: 15420,
-            activeAgentsPlatform: users.filter(u => u.isOnline).length,
-            uptime: '99.99%'
-        };
+        return { totalTenants: tenants.length, totalMessages: 15420, activeAgentsPlatform: users.filter(u => u.isOnline).length, uptime: '99.99%' };
     }
     async getAllTenants(): Promise<Tenant[]> {
         return (await this.getStorage<Tenant[]>('tenants')) || [];
     }
     async createTenant(name: string): Promise<Tenant> {
         const tenants = (await this.getAllTenants());
-        const newTenant: Tenant = {
-            id: nanoid(),
-            name,
-            siteKey: nanoid(8),
-            branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome!' },
-            queues: [],
-            workflows: []
-        };
+        const newTenant: Tenant = { id: nanoid(), name, sites: [], branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome!' }, queues: [], workflows: [] };
         tenants.push(newTenant);
         await this.setStorage('tenants', tenants);
         return newTenant;
-    }
-    async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
-        const tenants = await this.getAllTenants();
-        const tenant = tenants.find(t => t.siteKey === siteKey);
-        if (!tenant) return null;
-        return {
-            tenantId: tenant.id,
-            name: tenant.name,
-            branding: tenant.branding,
-            queues: tenant.queues.map(q => ({ id: q.id, name: q.name }))
-        };
-    }
-    async createVisitorConversation(siteKey: string, queueId: string, contact: { name: string, email?: string }): Promise<Conversation | null> {
-        const tenants = await this.getAllTenants();
-        const tenant = tenants.find(t => t.siteKey === siteKey);
-        if (!tenant) return null;
-        const newConv: Conversation = {
-            id: nanoid(),
-            tenantId: tenant.id,
-            queueId,
-            status: 'unassigned',
-            contactName: contact.name,
-            contactEmail: contact.email,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-        };
-        const key = `tenant:${tenant.id}:conversations`;
-        const convs = (await this.getStorage<Conversation[]>(key)) || [];
-        convs.push(newConv);
-        await this.setStorage(key, convs);
-        await this.updateConvIndex(newConv.id, tenant.id, newConv.status);
-        await this.emitEvent(tenant.id, 'conversation.started', newConv);
-        return newConv;
     }
     async endConversation(tenantId: string, conversationId: string): Promise<Conversation | null> {
         const key = `tenant:${tenantId}:conversations`;
@@ -191,7 +208,9 @@ export class GlobalDurableObject extends DurableObject {
         convs[index].status = 'ended';
         convs[index].updatedAt = Date.now();
         await this.setStorage(key, convs);
-        await this.updateConvIndex(conversationId, tenantId, 'ended');
+        const idxStore = await this.getStorage<Record<string, any>>('conversations_index') || {};
+        idxStore[conversationId].status = 'ended';
+        await this.setStorage('conversations_index', idxStore);
         await this.emitEvent(tenantId, 'conversation.ended', convs[index]);
         return convs[index];
     }
@@ -201,12 +220,7 @@ export class GlobalDurableObject extends DurableObject {
         if (!user) return null;
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);
-        return {
-            user,
-            token: `mock-jwt-${user.id}-${Date.now()}`,
-            tenant,
-            availableTenants: user.role === 'superadmin' ? tenants.map(t => ({ id: t.id, name: t.name })) : (tenant ? [{ id: tenant.id, name: tenant.name }] : [])
-        };
+        return { user, token: `mock-jwt-${user.id}-${Date.now()}`, tenant, availableTenants: user.role === 'superadmin' ? tenants.map(t => ({ id: t.id, name: t.name })) : (tenant ? [{ id: tenant.id, name: tenant.name }] : []) };
     }
     async getMe(token: string): Promise<{ user: User; tenant?: Tenant; availableTenants: any[] } | null> {
         const parts = token.split('-');
@@ -217,11 +231,7 @@ export class GlobalDurableObject extends DurableObject {
         if (!user) return null;
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);
-        return { 
-            user, 
-            tenant,
-            availableTenants: user.role === 'superadmin' ? tenants.map(t => ({ id: t.id, name: t.name })) : (tenant ? [{ id: tenant.id, name: tenant.name }] : [])
-        };
+        return { user, tenant, availableTenants: user.role === 'superadmin' ? tenants.map(t => ({ id: t.id, name: t.name })) : (tenant ? [{ id: tenant.id, name: tenant.name }] : []) };
     }
     async updatePresence(userId: string, status: PresenceStatus): Promise<void> {
         const users = (await this.getStorage<User[]>('users')) || [];
@@ -238,7 +248,9 @@ export class GlobalDurableObject extends DurableObject {
         if (index === -1) return null;
         convs[index] = { ...convs[index], status: 'owned', ownerId: agentId, updatedAt: Date.now() };
         await this.setStorage(key, convs);
-        await this.updateConvIndex(conversationId, tenantId, 'owned');
+        const idxStore = await this.getStorage<Record<string, any>>('conversations_index') || {};
+        idxStore[conversationId].status = 'owned';
+        await this.setStorage('conversations_index', idxStore);
         await this.emitEvent(tenantId, 'agent.assigned', convs[index]);
         return convs[index];
     }
@@ -251,16 +263,5 @@ export class GlobalDurableObject extends DurableObject {
         msgs.push(msg);
         await this.setStorage(key, msgs);
         return msg;
-    }
-    private async updateConvIndex(convId: string, tenantId: string, status: ConversationStatus): Promise<void> {
-        const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
-        index[convId] = {tenantId, status};
-        await this.setStorage('conversations_index', index);
-    }
-    async getPublicConvStatus(convId: string): Promise<{status: string, ended: boolean} | null> {
-        const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
-        const entry = index[convId];
-        if (!entry) return null;
-        return {status: entry.status, ended: entry.status === 'ended'};
     }
 }

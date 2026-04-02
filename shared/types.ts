@@ -30,8 +30,8 @@ export interface MetricPoint {
 }
 export interface SystemMetrics {
   hourlyMessageVolume: MetricPoint[];
-  avgResponseTime: number; // in seconds
-  resolutionRate: number; // percentage
+  avgResponseTime: number; 
+  resolutionRate: number; 
   activeAgents: number;
   totalConvs: number;
 }
@@ -59,23 +59,44 @@ export interface SystemEvent {
   timestamp: number;
   processed: boolean;
 }
+export interface TenantSite {
+  id: string;
+  name: string;
+  key: string;
+  defaultQueueId?: string;
+}
+export interface AuthPolicy {
+  allowLocalAuth: boolean;
+  entraClientId?: string;
+  entraClientSecretStub?: string;
+}
 export interface Tenant {
   id: string;
   name: string;
-  siteKey: string;
+  sites: TenantSite[];
   branding: {
     primaryColor: string;
     logoUrl?: string;
     welcomeMessage: string;
+    fontFamily?: string;
+    widgetPosition?: 'bottom-right' | 'bottom-left';
+    themePreset?: 'modern' | 'glass' | 'classic';
+    allowedOrigins?: string[];
   };
   queues: Queue[];
   workflows: Workflow[];
+  authPolicy?: AuthPolicy;
 }
 export interface Queue {
   id: string;
   tenantId: string;
   name: string;
   description?: string;
+  assignedAgentIds?: string[];
+  capacityMax?: number;
+  priority?: number;
+  isDeleted?: boolean;
+  autoAssignEnabled?: boolean;
 }
 export type ConversationStatus = 'unassigned' | 'owned' | 'ended';
 export interface Conversation {
@@ -110,12 +131,8 @@ export interface AuthPayload {
 export interface PublicConfig {
   tenantId: string;
   name: string;
-  branding: {
-    primaryColor: string;
-    logoUrl?: string;
-    welcomeMessage: string;
-  };
-  queues: { id: string; name: string }[];
+  branding: Tenant['branding'];
+  queues: { id: string; name: string; priority: number }[];
 }
 export interface ApiResponse<T = unknown> {
   success: boolean;

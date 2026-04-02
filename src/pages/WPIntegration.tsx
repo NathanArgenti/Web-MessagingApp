@@ -8,18 +8,16 @@ import { useAuthStore } from '@/lib/store';
 export function WPIntegration() {
   const tenant = useAuthStore(s => s.tenant);
   const siteKey = tenant?.sites?.[0]?.key || 'YOUR_SITE_KEY';
-  const currentOrigin = window.location.origin;
   const pluginCode = `<?php
 /**
  * Plugin Name: Mercury Messaging Widget
  * Description: Embeds the Mercury chat widget into your WordPress site.
- * Version: 1.0.0
  */
 add_action('wp_footer', function() {
     $site_key = get_option('mercury_site_key', '${siteKey}');
     $queue_id = get_option('mercury_default_queue', '');
-    // Inject the widget script pointing to the Mercury instance
-    echo "<script src='${currentOrigin}/widget.js?siteKey={$site_key}&queueId={$queue_id}' async></script>";
+    // Inject the widget script
+    echo "<script src='https://mercury.io/widget.js?siteKey={$site_key}&queueId={$queue_id}' async></script>";
 });
 // Admin menu for settings
 add_action('admin_menu', function() {
@@ -27,7 +25,6 @@ add_action('admin_menu', function() {
         ?>
         <div class="wrap">
             <h1>Mercury Configuration</h1>
-            <p>Connect your WordPress site to the Mercury Messaging platform.</p>
             <form method="post" action="options.php">
                 <?php settings_fields('mercury_group'); ?>
                 <table class="form-table">
@@ -83,7 +80,7 @@ add_action('admin_init', function() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm leading-relaxed">
-                  You can override the default queue by appending a <code className="bg-slate-100 px-1 rounded">queueId</code> query parameter
+                  You can override the default queue by appending a <code className="bg-slate-100 px-1 rounded">queueId</code> query parameter 
                   to your site's URL. Our widget automatically detects this and routes the conversation.
                 </p>
                 <div className="bg-slate-50 border p-4 rounded-lg font-mono text-xs text-slate-700">
@@ -92,7 +89,7 @@ add_action('admin_init', function() {
                 <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-lg border border-amber-100 text-amber-800">
                   <Info className="w-5 h-5 shrink-0 mt-0.5" />
                   <p className="text-xs">
-                    This is extremely useful for routing high-intent pages (Pricing, Checkout) to your Sales team,
+                    This is extremely useful for routing high-intent pages (Pricing, Checkout) to your Sales team, 
                     while keeping standard pages on General Support.
                   </p>
                 </div>
@@ -109,7 +106,7 @@ add_action('admin_init', function() {
                   Don't want to create a plugin? Just paste this snippet before the <code className="bg-white/20 px-1 rounded">{"</body>"}</code> tag in your theme.
                 </p>
                 <div className="bg-black/20 p-4 rounded-lg font-mono text-[10px] break-all border border-white/20">
-                  {`<script src="${currentOrigin}/widget.js?siteKey=${siteKey}"></script>`}
+                  {`<script src="https://mercury.io/widget.js?siteKey=${siteKey}"></script>`}
                 </div>
               </CardContent>
             </Card>
