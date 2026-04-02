@@ -31,6 +31,13 @@ export function userRoutes(app: Hono<{ Bindings: Env }>) {
         const data = await stub.sendMessage(message);
         return c.json({ success: true, data } as ApiResponse<Message>);
     });
+
+    app.get('/api/public/conversations/:id/status', async (c) => {
+        const id = c.req.param('id');
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.getPublicConvStatus(id);
+        return c.json({ success: !!data, data } as ApiResponse<{status: string, ended: boolean}>);
+    });
     // SUPERADMIN ROUTES
     app.get('/api/superadmin/tenants', async (c) => {
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));

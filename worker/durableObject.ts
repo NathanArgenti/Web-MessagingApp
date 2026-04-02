@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { User, Tenant, Queue, Conversation, Message, PresenceStatus, PublicConfig, SystemEvent, EventType } from '@shared/types';
+import type { User, Tenant, Queue, Conversation, Message, PresenceStatus, PublicConfig, SystemEvent, EventType, ConversationStatus } from '@shared/types';
 import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
@@ -117,6 +117,7 @@ export class GlobalDurableObject extends DurableObject {
         const convs = (await this.getStorage<Conversation[]>(key)) || [];
         convs.push(newConv);
         await this.setStorage(key, convs);
+        await this.updateConvIndex(newConv.id, tenant.id, newConv.status);
         await this.emitEvent(tenant.id, 'conversation.started', newConv);
         return newConv;
     }
@@ -128,6 +129,7 @@ export class GlobalDurableObject extends DurableObject {
         convs[index].status = 'ended';
         convs[index].updatedAt = Date.now();
         await this.setStorage(key, convs);
+        await this.updateConvIndex(conversationId, tenantId, 'ended');
         await this.emitEvent(tenantId, 'conversation.ended', convs[index]);
         return convs[index];
     }
@@ -177,6 +179,7 @@ export class GlobalDurableObject extends DurableObject {
         if (index === -1) return null;
         convs[index] = { ...convs[index], status: 'owned', ownerId: agentId, updatedAt: Date.now() };
         await this.setStorage(key, convs);
+        await this.updateConvIndex(conversationId, tenantId, 'owned');
         await this.emitEvent(tenantId, 'agent.assigned', convs[index]);
         return convs[index];
     }
@@ -189,5 +192,18 @@ export class GlobalDurableObject extends DurableObject {
         msgs.push(msg);
         await this.setStorage(key, msgs);
         return msg;
+    }
+
+    private async updateConvIndex(convId: string, tenantId: string, status: ConversationStatus): Promise<void> {
+        const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
+        index[convId] = {tenantId, status};
+        await this.setStorage('conversations_index', index);
+    }
+
+    async getPublicConvStatus(convId: string): Promise<{status: string, ended: boolean} | null> {
+        const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
+        const entry = index[convId];
+        if (!entry) return null;
+        return {status: entry.status, ended: entry.status === 'ended'};
     }
 }

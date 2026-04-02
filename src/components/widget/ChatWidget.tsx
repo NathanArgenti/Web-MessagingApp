@@ -41,15 +41,14 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
           if (json.success) setMessages(json.data ?? []);
         });
       // Simple status check
-      fetch(`/api/conversations`) // Mocking general check for session status
+      fetch(`/api/public/conversations/${sessionRef.current.convId}/status`)
         .then(res => res.json())
-        .then((json: ApiResponse<Conversation[]>) => {
-          const current = (json.data ?? []).find(c => c.id === sessionRef.current.convId);
-          if (current?.status === 'ended') setIsEnded(true);
+        .then((json: ApiResponse<{status: string, ended: boolean}>) => {
+          if (json.success && json.data?.ended) setIsEnded(true);
         });
     }, 4000);
     return () => clearInterval(interval);
-  }, [isOpen]); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isEnded, sessionRef.current?.convId]);
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
