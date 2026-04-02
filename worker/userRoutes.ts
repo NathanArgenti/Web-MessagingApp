@@ -85,6 +85,7 @@ export function userRoutes(rawApp: any) {
     });
     app.get('/api/agent/metrics', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const data = await stub.getAgentMetrics(tenantId);
         return c.json({ success: true, data });
@@ -110,6 +111,7 @@ export function userRoutes(rawApp: any) {
     // ADMIN & INTERNAL
     app.get('/api/admin/agents', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const data = await stub.getUsers(tenantId, 'agent');
         const admins = await stub.getUsers(tenantId, 'tenant_admin');
@@ -117,6 +119,7 @@ export function userRoutes(rawApp: any) {
     });
     app.get('/api/internal/offline', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const data = await stub.getOfflineRequests(tenantId);
         return c.json({ success: true, data });
@@ -124,9 +127,19 @@ export function userRoutes(rawApp: any) {
     app.post('/api/internal/offline/:id/dispatch', enforceTenantContext, async (c) => {
         const id = c.req.param('id');
         const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const ok = await stub.dispatchOfflineRequest(tenantId, id);
         return c.json({ success: ok });
+    });
+
+    app.put('/api/admin/settings', enforceTenantContext, async (c) => {
+        const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
+        const settings = await c.req.json<any>();
+        const stub = getStub(c);
+        await stub.updateTenantSettings(tenantId, settings);
+        return c.json({ success: true });
     });
     app.get('/api/superadmin/tenants', async (c) => {
         const token = getAuthToken(c);
@@ -169,6 +182,7 @@ export function userRoutes(rawApp: any) {
     });
     app.get('/api/conversations', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const data = await stub.getConversations(tenantId);
         return c.json({ success: true, data });

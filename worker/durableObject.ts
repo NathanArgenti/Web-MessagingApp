@@ -264,7 +264,7 @@ export class GlobalDurableObject extends DurableObject {
             if (targetQueue) break;
         }
         if (!targetQueue) return { available: false, agentsOnline: 0, capacityUsed: 0, capacityMax: 10, isFull: true };
-        const onlineAgents = users.filter(u => u.isOnline && targetQueue?.assignedAgentIds?.includes(u.id));
+        const onlineAgents = users.filter(u => u.isOnline && u.tenantId === targetQueue.tenantId && targetQueue?.assignedAgentIds?.includes(u.id));
         const convs = await this.getConversations(targetQueue.tenantId);
         const activeConvs = convs.filter(c => c.queueId === queueId && c.status === 'owned');
         return {

@@ -33,6 +33,19 @@ export function TenantAdmin() {
   const [isSaving, setIsSaving] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const inviteForm = useForm<{ email: string; name: string }>();
+
+  // Sync local state from tenant data when tenant changes
+  useEffect(() => {
+    if (tenant) {
+      setPrimaryColor(prev => tenant.branding?.primaryColor || '#06B6D4');
+      setWelcomeMessage(prev => tenant.branding?.welcomeMessage || '');
+      setWidgetPosition(prev => tenant.branding?.widgetPosition || 'bottom-right');
+      setThemePreset(prev => tenant.branding?.themePreset || 'modern');
+      setQueues(prev => tenant.queues ?? []);
+      setSites(prev => tenant.sites ?? []);
+      setEntraClientId(prev => tenant.authPolicy?.entraClientId || '');
+    }
+  }, [tenant]);
   // Fetch agents scoped ONLY to selected tenant
   const { data: agents = [] } = useQuery({
     queryKey: ['admin', 'agents', selectedTenantId],
@@ -208,7 +221,7 @@ export function TenantAdmin() {
                     <CardTitle>Queue Orchestration</CardTitle>
                     <CardDescription>Logical silos for conversation traffic and agent matching.</CardDescription>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => setQueues([...queues, { id: nanoid(), tenantId: selectedTenantId!, name: 'New Support Tier', priority: 0, capacityMax: 20, isDeleted: false, assignedAgentIds: [] }])} className="gap-2 rounded-lg">
+                  <Button variant="outline" size="sm" onClick={() => setQueues([...queues, { id: nanoid(), tenantId: selectedTenantId || '', name: 'New Support Tier', priority: 0, capacityMax: 20, isDeleted: false, assignedAgentIds: [] }])} className="gap-2 rounded-lg">
                     <Plus className="w-4 h-4" /> Define Queue
                   </Button>
                 </CardHeader>
@@ -269,6 +282,61 @@ export function TenantAdmin() {
                       </div>
                     );
                   })}
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="branding">
+              <Card className="border-none shadow-sm ring-1 ring-slate-200">
+                <CardHeader className="border-b">
+                  <CardTitle>UI Persona</CardTitle>
+                  <CardDescription>Custom brand identity and widget behavior.</CardDescription>
+                </CardHeader>
+                <CardContent className="p-8 space-y-8">
+                  <div className="grid md:grid-cols-2 gap-8">
+                    <div className="space-y-2">
+                      <Label>Primary Color</Label>
+                      <Input
+                        type="color"
+                        value={primaryColor}
+                        onChange={e => setPrimaryColor(e.target.value)}
+                        className="h-12 w-full"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Widget Position</Label>
+                      <Select value={widgetPosition} onValueChange={setWidgetPosition as any}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bottom-right">Bottom Right</SelectItem>
+                          <SelectItem value="bottom-left">Bottom Left</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="md:col-span-2 space-y-2">
+                      <Label>Welcome Message</Label>
+                      <Textarea
+                        value={welcomeMessage}
+                        onChange={e => setWelcomeMessage(e.target.value)}
+                        placeholder="Welcome! How may we assist?"
+                        rows={4}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Theme Preset</Label>
+                      <Select value={themePreset} onValueChange={setThemePreset as any}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="modern">Modern</SelectItem>
+                          <SelectItem value="glass">Glass</SelectItem>
+                          <SelectItem value="classic">Classic</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
