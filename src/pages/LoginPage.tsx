@@ -1,17 +1,14 @@
 import React, { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Shield, LayoutDashboard, Lock, Globe, ShieldCheck } from 'lucide-react';
+import { Shield, LayoutDashboard, Lock, Globe } from 'lucide-react';
 import { useAuthStore } from '@/lib/store';
 import { toast } from 'sonner';
 export function LoginPage() {
   const [email, setEmail] = useState('');
   const [showLocal, setShowLocal] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(false);
-  const [searchParams] = useSearchParams();
-  const isSetupMode = searchParams.get('setup') === '1' || searchParams.get('prod') === '1';
   const navigate = useNavigate();
   const setAuth = useAuthStore(s => s.setAuth);
   const handleLocalLogin = async (e: React.FormEvent) => {
@@ -39,28 +36,11 @@ export function LoginPage() {
       const res = await fetch('/api/auth/entra/mock');
       const json = await res.json();
       if (json.success) {
-        setAuth(json.data.user, json.data.token, json.data.tenant, json.data.availableTenants || []);
-        toast.success(`SSO Simulated: Welcome ${json.data.user.name}`);
+        setAuth(json.data.user, json.data.token, json.data.tenant);
         navigate('/superadmin');
-      } else {
-        toast.error(json.error || 'Mock SSO Failed');
       }
     } catch (err) {
       toast.error('SSO Mock failed');
-    }
-  };
-  const handleSafeInitialize = async () => {
-    setIsInitializing(true);
-    try {
-      const res = await fetch('/api/seed?prod=true', { method: 'POST' });
-      const json = await res.json();
-      if (res.ok) {
-        toast.success(json.data || 'Platform initialized');
-      }
-    } catch (e) {
-      toast.error('Initialization failed');
-    } finally {
-      setIsInitializing(false);
     }
   };
   return (
@@ -97,8 +77,8 @@ export function LoginPage() {
             <CardDescription>Choose your authentication method</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button
-              className="w-full bg-slate-900 hover:bg-slate-800"
+            <Button 
+              className="w-full bg-slate-900 hover:bg-slate-800" 
               size="lg"
               onClick={handleEntraMock}
             >
@@ -116,8 +96,8 @@ export function LoginPage() {
               </Button>
             ) : (
               <form onSubmit={handleLocalLogin} className="space-y-4">
-                <Input
-                  placeholder="admin@mercury.com"
+                <Input 
+                  placeholder="admin@mercury.com" 
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -130,23 +110,6 @@ export function LoginPage() {
                   Cancel
                 </Button>
               </form>
-            )}
-            {isSetupMode && (
-              <div className="pt-6 mt-6 border-t space-y-4">
-                <p className="text-[10px] font-bold text-center text-muted-foreground uppercase tracking-widest">Administrator Setup</p>
-                <Button 
-                  variant="outline" 
-                  className="w-full gap-2 border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-50"
-                  onClick={handleSafeInitialize}
-                  disabled={isInitializing}
-                >
-                  <ShieldCheck className="w-4 h-4" /> 
-                  {isInitializing ? 'Working...' : 'Safe Initialize Platform'}
-                </Button>
-                <p className="text-[10px] text-center text-slate-400 italic px-4">
-                  Use this if storage is empty or you are locked out. It creates default tenants and the SuperAdmin account without wipes.
-                </p>
-              </div>
             )}
           </CardContent>
         </Card>
