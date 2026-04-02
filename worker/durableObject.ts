@@ -3,7 +3,7 @@ import type {
     User, Tenant, Queue, Conversation, Message, PresenceStatus,
     PublicConfig, SystemEvent, EventType, ConversationStatus,
     OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite,
-    UserCreateInput, UserUpdateInput
+    UserCreateInput, UserUpdateInput, QueueStatus
 } from '@shared/types';
 import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
@@ -83,19 +83,82 @@ export class GlobalDurableObject extends DurableObject {
         await this.setStorage('users', filtered);
         return true;
     }
+    async getQueueStatus(tenantId: string, queueId: string): Promise<QueueStatus | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tenant = tenants.find(t => t.id === tenantId);
+        if (!tenant) return null;
+        const queue = tenant.queues?.find(q => q.id === queueId);
+        if (!queue) return null;
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const agentsOnline = users.filter(u => 
+            u.tenantId === tenantId && 
+            u.isOnline && 
+            queue.assignedAgentIds?.includes(u.id)
+        ).length;
+        const conversations = (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
+        const activeInQueue = conversations.filter(c => c.queueId === queueId && c.status !== 'ended').length;
+        const capacityMax = queue.capacityMax || 10;
+        const isFull = activeInQueue >= capacityMax;
+        return {
+            available: agentsOnline > 0 && !isFull,
+            agentsOnline,
+            capacityUsed: activeInQueue,
+            capacityMax,
+            isFull
+        };
+    }
+    async createOfflineRequest(tenantId: string, data: Omit<OfflineRequest, 'id' | 'status' | 'createdAt' | 'tenantId'>): Promise<OfflineRequest> {
+        const key = `tenant:${tenantId}:offline_requests`;
+        const requests = (await this.getStorage<OfflineRequest[]>(key)) || [];
+        const newReq: OfflineRequest = {
+            ...data,
+            id: nanoid(),
+            tenantId,
+            status: 'pending',
+            createdAt: Date.now()
+        };
+        requests.push(newReq);
+        await this.setStorage(key, requests);
+        return newReq;
+    }
+    async getOfflineRequests(tenantId: string): Promise<OfflineRequest[]> {
+        return (await this.getStorage<OfflineRequest[]>(`tenant:${tenantId}:offline_requests`)) || [];
+    }
+    async toggleQueueMembership(userId: string, tenantId: string, queueId: string, action: 'join' | 'leave'): Promise<boolean> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tIdx = tenants.findIndex(t => t.id === tenantId);
+        if (tIdx === -1) return false;
+        const qIdx = tenants[tIdx].queues?.findIndex(q => q.id === queueId);
+        if (qIdx === -1 || qIdx === undefined) return false;
+        const assigned = tenants[tIdx].queues[qIdx].assignedAgentIds || [];
+        if (action === 'join') {
+            if (!assigned.includes(userId)) assigned.push(userId);
+        } else {
+            tenants[tIdx].queues[qIdx].assignedAgentIds = assigned.filter(id => id !== userId);
+        }
+        await this.setStorage('tenants', tenants);
+        return true;
+    }
     async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
         const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
         for (const tenant of tenants) {
             const site = tenant.sites?.find(s => s.key === siteKey);
             if (site) {
+                const queues = (tenant.queues || [])
+                        .filter(q => !q.isDeleted)
+                        .map(q => ({ id: q.id, name: q.name, priority: q.priority || 0 }))
+                        .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+                const defaultQueueId = site.defaultQueueId || queues[0]?.id;
+                let initialStatus: QueueStatus | undefined;
+                if (defaultQueueId) {
+                    initialStatus = await this.getQueueStatus(tenant.id, defaultQueueId) || undefined;
+                }
                 return {
                     tenantId: tenant.id,
                     name: tenant.name,
                     branding: tenant.branding,
-                    queues: (tenant.queues || [])
-                        .filter(q => !q.isDeleted)
-                        .map(q => ({ id: q.id, name: q.name, priority: q.priority || 0 }))
-                        .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+                    queues,
+                    initialQueueStatus: initialStatus
                 };
             }
         }
@@ -105,7 +168,6 @@ export class GlobalDurableObject extends DurableObject {
         const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
         const idx = tenants.findIndex(t => t.id === tenantId);
         if (idx === -1) return null;
-        // Ensure assignedAgentIds is always an array for all queues
         if (settings.queues) {
             settings.queues = settings.queues.map(q => ({
                 ...q,
@@ -139,7 +201,7 @@ export class GlobalDurableObject extends DurableObject {
         const existingConvs = (await this.getStorage<Conversation[]>(conversationsKey)) || [];
         const activeInQueue = existingConvs.filter(c => c.queueId === finalQueue?.id && c.status !== 'ended').length;
         if (finalQueue.capacityMax && activeInQueue >= finalQueue.capacityMax) {
-            return null; 
+            return null;
         }
         const newConv: Conversation = {
             id: nanoid(),

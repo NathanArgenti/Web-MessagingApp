@@ -41,6 +41,17 @@ export interface OfflineRequest {
   dispatchTimestamp?: number;
   dispatchedBy?: string;
 }
+export interface QueueStatus {
+  available: boolean;
+  agentsOnline: number;
+  capacityUsed: number;
+  capacityMax: number;
+  isFull: boolean;
+}
+export interface QueueJoinLeaveInput {
+  queueId: string;
+  action: 'join' | 'leave';
+}
 export interface MetricPoint {
   timestamp: string;
   value: number;
@@ -150,6 +161,7 @@ export interface PublicConfig {
   name: string;
   branding: Tenant['branding'];
   queues: { id: string; name: string; priority: number }[];
+  initialQueueStatus?: QueueStatus;
 }
 export interface ApiResponse<T = unknown> {
   success: boolean;

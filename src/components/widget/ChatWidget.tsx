@@ -1,23 +1,27 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, X, Send, Loader2, RotateCcw, Power } from 'lucide-react';
+import { MessageCircle, X, Send, Loader2, Mail, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { ApiResponse, Message, PublicConfig, Conversation } from '@shared/types';
+import { ApiResponse, Message, PublicConfig, Conversation, QueueStatus } from '@shared/types';
 import { nanoid } from 'nanoid';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 interface ChatWidgetProps {
   siteKey: string;
 }
 export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [config, setConfig] = useState<PublicConfig | null>(null);
+  const [status, setStatus] = useState<QueueStatus | null>(null);
   const [session, setSession] = useState<{ convId: string, visitorId: string } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isEnded, setIsEnded] = useState(false);
   const [input, setInput] = useState('');
   const [isStarting, setIsStarting] = useState(false);
+  const [showOfflineForm, setShowOfflineForm] = useState(false);
+  const [offlineSubmitted, setOfflineSubmitted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef(session);
   useEffect(() => {
@@ -40,12 +44,29 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     fetch(`/api/public/config/${siteKey}`)
       .then(res => res.json())
       .then((json: ApiResponse<PublicConfig>) => {
-        if (json.success) setConfig(json.data!);
+        if (json.success) {
+          setConfig(json.data!);
+          if (json.data?.initialQueueStatus) setStatus(json.data.initialQueueStatus);
+        }
       })
       .catch(err => console.error("Config fetch error", err));
   }, [siteKey]);
   useEffect(() => {
-    if (!sessionRef.current?.convId || !isOpen || isEnded) return;
+    if (!config?.tenantId || !isOpen || session) return;
+    const pollStatus = () => {
+      const qId = config.queues?.[0]?.id;
+      if (!qId) return;
+      fetch(`/api/public/queue/${qId}/status?tenantId=${config.tenantId}`)
+        .then(res => res.json())
+        .then((json: ApiResponse<QueueStatus>) => {
+          if (json.success) setStatus(json.data!);
+        });
+    };
+    const interval = setInterval(pollStatus, 10000);
+    return () => clearInterval(interval);
+  }, [config, isOpen, session]);
+  useEffect(() => {
+    if (!sessionRef.current?.convId || !isOpen) return;
     const interval = setInterval(() => {
       if (!sessionRef.current) return;
       fetch(`/api/conversations/${sessionRef.current.convId}/messages`)
@@ -56,7 +77,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
         .catch(err => console.error("Poll messages error", err));
     }, 4000);
     return () => clearInterval(interval);
-  }, [isOpen, isEnded]);
+  }, [isOpen]);
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -64,15 +85,13 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     if (!config) return;
     setIsStarting(true);
     try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const urlQueueId = urlParams.get('queueId');
       const visitorId = nanoid();
       const res = await fetch('/api/public/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           siteKey,
-          queueId: urlQueueId || (config.queues?.[0]?.id),
+          queueId: config.queues?.[0]?.id,
           name: 'Visitor ' + visitorId.slice(0, 4),
         })
       });
@@ -80,11 +99,8 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
       if (json.success) {
         const newSession = { convId: json.data!.id, visitorId };
         setSession(newSession);
-        setIsEnded(false);
         setMessages([]);
         localStorage.setItem(`mercury_session_${siteKey}`, JSON.stringify(newSession));
-      } else {
-        alert(json.error || "Chat failed to start");
       }
     } finally {
       setIsStarting(false);
@@ -92,7 +108,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   };
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !session || isEnded) return;
+    if (!input.trim() || !session) return;
     const content = input;
     setInput('');
     try {
@@ -109,10 +125,36 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
       console.error("Send error", err);
     }
   };
+  const handleOfflineSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const payload = {
+      tenantId: config?.tenantId,
+      queueId: config?.queues?.[0]?.id,
+      visitorName: fd.get('name'),
+      visitorEmail: fd.get('email'),
+      subject: 'Offline Message',
+      message: fd.get('message'),
+    };
+    try {
+      const res = await fetch('/api/public/offline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        setOfflineSubmitted(true);
+        setTimeout(() => { setIsOpen(false); setOfflineSubmitted(false); setShowOfflineForm(false); }, 3000);
+      }
+    } catch (e) {
+      toast.error("Failed to send message");
+    }
+  };
   if (!config) return null;
   const branding = config.branding;
   const primaryColor = branding?.primaryColor || '#06B6D4';
   const positionClass = branding?.widgetPosition === 'bottom-left' ? 'left-6' : 'right-6';
+  const isAvailable = status?.available ?? true;
   return (
     <div className={cn("fixed bottom-6 z-[100] font-sans", positionClass)}>
       <AnimatePresence>
@@ -125,22 +167,57 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
           >
             <div className="p-4 flex justify-between items-center text-white" style={{ backgroundColor: primaryColor }}>
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center"><MessageCircle className="w-5 h-5" /></div>
+                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                  <MessageCircle className="w-5 h-5" />
+                </div>
                 <h3 className="text-sm font-bold">{config.name}</h3>
               </div>
-              <Button variant="ghost" size="icon" className="text-white hover:bg-white/20" onClick={() => setIsOpen(false)}><X className="w-5 h-5" /></Button>
+              <Button variant="ghost" size="icon" className="text-white hover:bg-white/20" onClick={() => setIsOpen(false)}>
+                <X className="w-5 h-5" />
+              </Button>
             </div>
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-hidden">
-              {!session ? (
+              {offlineSubmitted ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center">
+                    <CheckCircle2 className="w-10 h-10 text-green-500" />
+                  </motion.div>
+                  <h4 className="font-bold text-slate-800">Message Sent</h4>
+                  <p className="text-sm text-slate-500">We've received your request and will get back to you soon.</p>
+                </div>
+              ) : showOfflineForm ? (
+                <ScrollArea className="flex-1 p-6">
+                  <form onSubmit={handleOfflineSubmit} className="space-y-4">
+                    <div className="space-y-1">
+                      <h4 className="font-bold text-slate-800">Leave a Message</h4>
+                      <p className="text-xs text-slate-500">All agents are currently offline. Leave your details and we'll reply via email.</p>
+                    </div>
+                    <Input name="name" placeholder="Your Name" required className="bg-white" />
+                    <Input name="email" type="email" placeholder="Email Address" required className="bg-white" />
+                    <Textarea name="message" placeholder="How can we help?" required className="bg-white min-h-[100px]" />
+                    <Button type="submit" className="w-full text-white" style={{ backgroundColor: primaryColor }}>Send Message</Button>
+                    <Button type="button" variant="ghost" className="w-full text-xs" onClick={() => setShowOfflineForm(false)}>Back</Button>
+                  </form>
+                </ScrollArea>
+              ) : !session ? (
                 <div className="flex-1 p-8 flex flex-col items-center justify-center text-center space-y-4">
-                  <div className="w-16 h-16 rounded-2xl bg-white shadow-md flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-2xl bg-white shadow-md flex items-center justify-center mb-2">
                     <MessageCircle className="w-8 h-8" style={{ color: primaryColor }} />
                   </div>
                   <h4 className="font-bold text-slate-800">Hi there!</h4>
-                  <p className="text-sm text-slate-500 leading-relaxed">{branding?.welcomeMessage}</p>
-                  <Button className="w-full mt-6" style={{ backgroundColor: primaryColor }} onClick={startChat} disabled={isStarting}>
-                    {isStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Start Chat'}
-                  </Button>
+                  <p className="text-sm text-slate-500 leading-relaxed px-4">{branding?.welcomeMessage}</p>
+                  {isAvailable ? (
+                    <Button className="w-full mt-6 text-white" style={{ backgroundColor: primaryColor }} onClick={startChat} disabled={isStarting}>
+                      {isStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Start Chat'}
+                    </Button>
+                  ) : (
+                    <div className="w-full space-y-3 mt-6">
+                      <div className="text-[10px] uppercase tracking-wider font-bold text-slate-400 bg-slate-100 py-1 rounded">No Agents Online</div>
+                      <Button variant="outline" className="w-full gap-2 border-dashed" onClick={() => setShowOfflineForm(true)}>
+                        <Mail className="w-4 h-4" /> Email Us Instead
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -161,7 +238,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
                   </ScrollArea>
                   <form onSubmit={handleSend} className="p-4 bg-white border-t flex gap-2">
                     <Input placeholder="Message..." className="bg-slate-50 border-0" value={input} onChange={e => setInput(e.target.value)} />
-                    <Button size="icon" style={{ backgroundColor: primaryColor }} type="submit" disabled={!input.trim()}><Send className="w-4 h-4" /></Button>
+                    <Button size="icon" style={{ backgroundColor: primaryColor }} className="text-white" type="submit" disabled={!input.trim()}><Send className="w-4 h-4" /></Button>
                   </form>
                 </>
               )}
@@ -172,14 +249,17 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
           </motion.div>
         )}
       </AnimatePresence>
-      <motion.button 
-        whileHover={{ scale: 1.05 }} 
+      <motion.button
+        whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
-        className="h-14 w-14 rounded-full shadow-2xl flex items-center justify-center text-white" 
-        style={{ backgroundColor: primaryColor }} 
+        className="h-14 w-14 rounded-full shadow-2xl flex items-center justify-center text-white relative"
+        style={{ backgroundColor: primaryColor }}
         onClick={() => setIsOpen(!isOpen)}
       >
         {isOpen ? <X className="w-6 h-6" /> : <MessageCircle className="w-6 h-6" />}
+        {!isAvailable && !isOpen && !session && (
+          <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 rounded-full border-2 border-white" />
+        )}
       </motion.button>
     </div>
   );

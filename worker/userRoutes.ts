@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 import { Env } from './core-utils';
-import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant } from '@shared/types';
+import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus } from '@shared/types';
 import { nanoid } from 'nanoid';
-type HonoApp = Hono<{ Bindings: Env }>;
+// Use 'any' to break Hono's deep type instantiation limits
 export function userRoutes(rawApp: any) {
-    const app = rawApp as HonoApp;
+    const app = rawApp as Hono;
     const getTenantId = (c: any) => c.req.header('X-Tenant-ID');
+    const getAuthToken = (c: any) => c.req.header('Authorization')?.split(' ')[1] || '';
     // PUBLIC
     app.get('/api/public/config/:siteKey', async (c) => {
         const siteKey = c.req.param('siteKey');
@@ -14,11 +15,38 @@ export function userRoutes(rawApp: any) {
         if (!data) return c.json({ success: false, error: 'Site not found' } as ApiResponse<any>, 404);
         return c.json({ success: true, data } as ApiResponse<any>);
     });
+    app.get('/api/public/queue/:queueId/status', async (c) => {
+        const queueId = c.req.param('queueId');
+        const tenantId = c.req.query('tenantId');
+        if (!tenantId) return c.json({ success: false, error: 'Missing tenantId' }, 400);
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.getQueueStatus(tenantId, queueId);
+        return c.json({ success: true, data } as ApiResponse<QueueStatus>);
+    });
+    app.post('/api/public/offline', async (c) => {
+        const body = await c.req.json();
+        const { tenantId, ...leadData } = body;
+        if (!tenantId) return c.json({ success: false, error: 'Missing tenantId' }, 400);
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.createOfflineRequest(tenantId, leadData);
+        return c.json({ success: true, data } as ApiResponse<OfflineRequest>);
+    });
     app.post('/api/public/conversations', async (c) => {
         const { siteKey, queueId, name, email } = await c.req.json();
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         const data = await stub.createVisitorConversation(siteKey, queueId, { name, email });
         return c.json({ success: !!data, data, error: !data ? 'Queue capacity reached or invalid' : undefined } as ApiResponse<any>);
+    });
+    // AGENT CONTROLS
+    app.post('/api/agent/queues/:action', async (c) => {
+        const action = c.req.param('action') as 'join' | 'leave';
+        const { queueId } = await c.req.json();
+        const token = getAuthToken(c);
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const me = await stub.getMe(token);
+        if (!me || !me.user.tenantId) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        const success = await stub.toggleQueueMembership(me.user.id, me.user.tenantId, queueId, action);
+        return c.json({ success } as ApiResponse<boolean>);
     });
     // INTERNAL ADMIN (Tenants & Agents)
     app.get('/api/admin/agents', async (c) => {
@@ -42,6 +70,13 @@ export function userRoutes(rawApp: any) {
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         const data = await stub.updateTenantSettings(tenantId, body);
         return c.json({ success: !!data, data } as ApiResponse<Tenant>);
+    });
+    app.get('/api/internal/offline', async (c) => {
+        const tenantId = getTenantId(c);
+        if (!tenantId) return c.json({ success: false, error: 'Missing tenant' }, 400);
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.getOfflineRequests(tenantId);
+        return c.json({ success: true, data } as ApiResponse<OfflineRequest[]>);
     });
     // SUPERADMIN
     app.get('/api/superadmin/users', async (c) => {
@@ -72,8 +107,7 @@ export function userRoutes(rawApp: any) {
     app.post('/api/conversations/:id/messages', async (c) => {
         const id = c.req.param('id');
         const body = await c.req.json();
-        const authHeader = c.req.header('Authorization');
-        const token = authHeader?.split(' ')[1] || '';
+        const token = getAuthToken(c);
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         const me = await stub.getMe(token);
         if (!me) return c.json({ success: false, error: 'Unauthorized' } as ApiResponse<any>, 401);
@@ -94,7 +128,7 @@ export function userRoutes(rawApp: any) {
         const data = await stub.getMessages(id);
         return c.json({ success: true, data: data || [] } as ApiResponse<Message[]>);
     });
-    // OTHER
+    // AUTH & OPS
     app.post('/api/seed', async (c) => {
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         await stub.seedDatabase();
@@ -107,8 +141,7 @@ export function userRoutes(rawApp: any) {
         return c.json({ success: !!data, data } as ApiResponse<AuthPayload>);
     });
     app.get('/api/auth/me', async (c) => {
-        const authHeader = c.req.header('Authorization');
-        const token = authHeader?.split(' ')[1] || '';
+        const token = getAuthToken(c);
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         const data = await stub.getMe(token);
         return c.json({ success: !!data, data } as ApiResponse<any>);
