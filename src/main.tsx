@@ -3,10 +3,7 @@ import { enableMapSet } from "immer";
 enableMapSet();
 import React, { StrictMode } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import {
-  createBrowserRouter,
-  RouterProvider,
-} from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
@@ -15,23 +12,24 @@ import { HomePage } from '@/pages/HomePage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AgentConsole } from '@/pages/AgentConsole';
 import { TenantAdmin } from '@/pages/TenantAdmin';
+import { SuperAdmin } from '@/pages/SuperAdmin';
 import { AuthGuard } from '@/components/auth/AuthGuard';
-const queryClient = new QueryClient();
+import { Toaster } from 'sonner';
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    }
+  }
+});
 const router = createBrowserRouter([
-  {
-    path: "/",
-    element: <HomePage />,
-    errorElement: <RouteErrorBoundary />,
-  },
-  {
-    path: "/login",
-    element: <LoginPage />,
-    errorElement: <RouteErrorBoundary />,
-  },
+  { path: "/", element: <HomePage />, errorElement: <RouteErrorBoundary /> },
+  { path: "/login", element: <LoginPage />, errorElement: <RouteErrorBoundary /> },
   {
     path: "/agent",
     element: (
-      <AuthGuard roles={['agent', 'tenant_admin']}>
+      <AuthGuard roles={['agent', 'tenant_admin', 'superadmin']}>
         <AgentConsole />
       </AuthGuard>
     ),
@@ -40,8 +38,8 @@ const router = createBrowserRouter([
   {
     path: "/admin",
     element: (
-      <AuthGuard roles={['tenant_admin']}>
-        <TenantAdmin title="Tenant Administration" />
+      <AuthGuard roles={['tenant_admin', 'superadmin']}>
+        <TenantAdmin />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,
@@ -50,13 +48,12 @@ const router = createBrowserRouter([
     path: "/superadmin",
     element: (
       <AuthGuard roles={['superadmin']}>
-        <TenantAdmin title="Platform Oversight" />
+        <SuperAdmin />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,
   },
 ]);
-// Singleton pattern for React root to prevent double-initialization errors
 const container = document.getElementById('root');
 if (container) {
   const global = window as any;
@@ -72,6 +69,7 @@ if (container) {
       <QueryClientProvider client={queryClient}>
         <ErrorBoundary>
           <RouterProvider router={router} />
+          <Toaster richColors position="top-right" />
         </ErrorBoundary>
       </QueryClientProvider>
     </StrictMode>,

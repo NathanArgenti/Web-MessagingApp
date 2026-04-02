@@ -10,6 +10,24 @@ export interface User {
   isOnline: boolean;
   presenceStatus?: PresenceStatus;
 }
+export type EventType = 'conversation.started' | 'conversation.ended' | 'agent.assigned';
+export type ActionType = 'webhook' | 'email_mock' | 'log';
+export interface Workflow {
+  id: string;
+  name: string;
+  eventType: EventType;
+  actionType: ActionType;
+  targetUrl?: string;
+  active: boolean;
+}
+export interface SystemEvent {
+  id: string;
+  tenantId: string;
+  type: EventType;
+  payload: Record<string, any>;
+  timestamp: number;
+  processed: boolean;
+}
 export interface Tenant {
   id: string;
   name: string;
@@ -20,6 +38,7 @@ export interface Tenant {
     welcomeMessage: string;
   };
   queues: Queue[];
+  workflows: Workflow[];
 }
 export interface Queue {
   id: string;
@@ -64,7 +83,12 @@ export interface PublicConfig {
     logoUrl?: string;
     welcomeMessage: string;
   };
-  queues: { id: string, name: string }[];
+  queues: { id: string; name: string }[];
+}
+export interface SuperAdminStats {
+  totalTenants: number;
+  activeAgents: number;
+  totalConversations: number;
 }
 export interface ApiResponse<T = unknown> {
   success: boolean;

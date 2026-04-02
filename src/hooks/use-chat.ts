@@ -9,11 +9,16 @@ export function useChat(conversationId: string | null) {
     queryKey: ['messages', conversationId],
     queryFn: async () => {
       if (!conversationId) return [];
-      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const json = await res.json() as ApiResponse<Message[]>;
-      return json.data || [];
+      try {
+        const res = await fetch(`/api/conversations/${conversationId}/messages`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const json = await res.json() as ApiResponse<Message[]>;
+        return json.data ?? [];
+      } catch (e) {
+        console.error('[POLLING ERROR]', e);
+        return [];
+      }
     },
     enabled: !!conversationId,
     refetchInterval: 3000,
@@ -23,7 +28,7 @@ export function useChat(conversationId: string | null) {
       if (!conversationId) throw new Error('No active conversation');
       const res = await fetch(`/api/conversations/${conversationId}/messages`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
@@ -54,11 +59,28 @@ export function useChat(conversationId: string | null) {
     },
     onError: (err) => toast.error(err.message),
   });
+  const endMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/conversations/${id}/end`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const json = await res.json() as ApiResponse<Conversation>;
+      if (!json.success) throw new Error(json.error);
+      return json.data!;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      toast.success('Conversation closed');
+    },
+    onError: (err) => toast.error(err.message),
+  });
   return {
-    messages,
+    messages: messages ?? [],
     isLoading,
     sendMessage: sendMutation.mutate,
     isSending: sendMutation.isPending,
     claimConversation: claimMutation.mutate,
+    endConversation: endMutation.mutate,
   };
 }

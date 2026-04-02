@@ -11,7 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 import { useChat } from '@/hooks/use-chat';
 import { Conversation, ApiResponse, PresenceStatus } from '@shared/types';
-import { MessageCircle, User as UserIcon, Send, Clock } from 'lucide-react';
+import { MessageCircle, User as UserIcon, Send, Clock, Power } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -32,12 +32,12 @@ export function AgentConsole() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const json = await res.json() as ApiResponse<Conversation[]>;
-      return json.data || [];
+      return json.data ?? [];
     },
     refetchInterval: 5000,
     enabled: !!token,
   });
-  const { messages, sendMessage, claimConversation } = useChat(activeId);
+  const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -61,9 +61,9 @@ export function AgentConsole() {
       body: JSON.stringify({ status })
     });
   };
-  const myChats = conversations.filter(c => c.ownerId === userId && c.status === 'owned');
-  const unassigned = conversations.filter(c => c.status === 'unassigned');
-  const activeConv = conversations.find(c => c.id === activeId);
+  const myChats = (conversations ?? []).filter(c => c.ownerId === userId && c.status === 'owned');
+  const unassigned = (conversations ?? []).filter(c => c.status === 'unassigned');
+  const activeConv = (conversations ?? []).find(c => c.id === activeId);
   return (
     <MainLayout>
       <div className="h-[calc(100vh-3.5rem)] flex flex-col overflow-hidden">
@@ -156,7 +156,7 @@ export function AgentConsole() {
                 <ScrollArea className="flex-1 p-6">
                   <div className="space-y-4">
                     <AnimatePresence initial={false}>
-                      {messages.map((m) => (
+                      {(messages ?? []).map((m) => (
                         <motion.div
                           key={m.id}
                           initial={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -217,6 +217,14 @@ export function AgentConsole() {
                       <p className="text-xs text-muted-foreground">{activeConv.contactEmail || 'No email provided'}</p>
                     </div>
                     <div className="space-y-4 pt-4 border-t">
+                      <Button 
+                        variant="destructive" 
+                        size="sm" 
+                        className="w-full gap-2"
+                        onClick={() => endConversation(activeConv.id)}
+                      >
+                        <Power className="w-4 h-4" /> End Conversation
+                      </Button>
                       <div>
                         <Label className="text-[10px] uppercase text-slate-400 font-bold">Status</Label>
                         <div className="mt-1">

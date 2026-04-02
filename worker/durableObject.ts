@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { User, Tenant, Queue, Conversation, Message, PresenceStatus, PublicConfig } from '@shared/types';
+import type { User, Tenant, Queue, Conversation, Message, PresenceStatus, PublicConfig, SystemEvent, EventType } from '@shared/types';
 import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
@@ -19,14 +19,16 @@ export class GlobalDurableObject extends DurableObject {
                 name: 'Acme Corp',
                 siteKey: 'acme-123',
                 branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome to Acme Support!' },
-                queues: [queues[0], queues[1]]
+                queues: [queues[0], queues[1]],
+                workflows: []
             },
             {
                 id: 't2',
                 name: 'Globex',
                 siteKey: 'globex-456',
                 branding: { primaryColor: '#F38020', welcomeMessage: 'How can Globex help today?' },
-                queues: []
+                queues: [],
+                workflows: []
             }
         ];
         const users: User[] = [
@@ -34,26 +36,60 @@ export class GlobalDurableObject extends DurableObject {
             { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online' },
             { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline' }
         ];
-        const conversations: Conversation[] = [
-          {
-            id: 'c1',
-            tenantId: 't1',
-            queueId: 'q1',
-            status: 'unassigned',
-            contactName: 'John Doe',
-            contactEmail: 'john@example.com',
-            createdAt: Date.now() - 100000,
-            updatedAt: Date.now() - 100000
-          }
-        ];
         await this.setStorage('tenants', tenants);
         await this.setStorage('users', users);
         await this.setStorage('queues', queues);
-        await this.setStorage('tenant:t1:conversations', conversations);
         return true;
     }
-    async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
+    async emitEvent(tenantId: string, type: EventType, payload: any): Promise<void> {
+        const outbox = (await this.getStorage<SystemEvent[]>('outbox')) || [];
+        const event: SystemEvent = {
+            id: nanoid(),
+            tenantId,
+            type,
+            payload,
+            timestamp: Date.now(),
+            processed: false
+        };
+        outbox.push(event);
+        await this.setStorage('outbox', outbox);
+        await this.ctx.storage.setAlarm(Date.now() + 1000);
+    }
+    async alarm() {
+        const outbox = (await this.getStorage<SystemEvent[]>('outbox')) || [];
         const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        for (const event of outbox.filter(e => !e.processed)) {
+            const tenant = tenants.find(t => t.id === event.tenantId);
+            if (tenant) {
+                const workflows = tenant.workflows.filter(w => w.eventType === event.type && w.active);
+                for (const wf of workflows) {
+                    console.log(`[WORKFLOW] Triggered: ${wf.name} | Action: ${wf.actionType} | Target: ${wf.targetUrl}`);
+                    // In a real env, we'd perform fetch() here
+                }
+            }
+            event.processed = true;
+        }
+        await this.setStorage('outbox', outbox.filter(e => !e.processed));
+    }
+    async getAllTenants(): Promise<Tenant[]> {
+        return (await this.getStorage<Tenant[]>('tenants')) || [];
+    }
+    async createTenant(name: string): Promise<Tenant> {
+        const tenants = (await this.getAllTenants());
+        const newTenant: Tenant = {
+            id: nanoid(),
+            name,
+            siteKey: nanoid(8),
+            branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome!' },
+            queues: [],
+            workflows: []
+        };
+        tenants.push(newTenant);
+        await this.setStorage('tenants', tenants);
+        return newTenant;
+    }
+    async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
+        const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.siteKey === siteKey);
         if (!tenant) return null;
         return {
@@ -64,7 +100,7 @@ export class GlobalDurableObject extends DurableObject {
         };
     }
     async createVisitorConversation(siteKey: string, queueId: string, contact: { name: string, email?: string }): Promise<Conversation | null> {
-        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.siteKey === siteKey);
         if (!tenant) return null;
         const newConv: Conversation = {
@@ -81,14 +117,25 @@ export class GlobalDurableObject extends DurableObject {
         const convs = (await this.getStorage<Conversation[]>(key)) || [];
         convs.push(newConv);
         await this.setStorage(key, convs);
+        await this.emitEvent(tenant.id, 'conversation.started', newConv);
         return newConv;
     }
-    async updateTenantSettings(tenantId: string, branding: Tenant['branding'], queues: Queue[]): Promise<boolean> {
-        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+    async endConversation(tenantId: string, conversationId: string): Promise<Conversation | null> {
+        const key = `tenant:${tenantId}:conversations`;
+        const convs = (await this.getStorage<Conversation[]>(key)) || [];
+        const index = convs.findIndex(c => c.id === conversationId);
+        if (index === -1) return null;
+        convs[index].status = 'ended';
+        convs[index].updatedAt = Date.now();
+        await this.setStorage(key, convs);
+        await this.emitEvent(tenantId, 'conversation.ended', convs[index]);
+        return convs[index];
+    }
+    async updateTenantSettings(tenantId: string, data: Partial<Tenant>): Promise<boolean> {
+        const tenants = await this.getAllTenants();
         const index = tenants.findIndex(t => t.id === tenantId);
         if (index === -1) return false;
-        tenants[index].branding = branding;
-        tenants[index].queues = queues;
+        tenants[index] = { ...tenants[index], ...data };
         await this.setStorage('tenants', tenants);
         return true;
     }
@@ -96,7 +143,7 @@ export class GlobalDurableObject extends DurableObject {
         const users = (await this.getStorage<User[]>('users')) || [];
         const user = users.find(u => u.email === email);
         if (!user) return null;
-        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);
         return {
             user,
@@ -111,7 +158,7 @@ export class GlobalDurableObject extends DurableObject {
         const users = (await this.getStorage<User[]>('users')) || [];
         const user = users.find(u => u.id === userId);
         if (!user) return null;
-        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);
         return { user, tenant };
     }
@@ -128,17 +175,17 @@ export class GlobalDurableObject extends DurableObject {
         const convs = (await this.getStorage<Conversation[]>(key)) || [];
         const index = convs.findIndex(c => c.id === conversationId);
         if (index === -1) return null;
-        const updated = { ...convs[index], status: 'owned' as const, ownerId: agentId, updatedAt: Date.now() };
-        convs[index] = updated;
+        convs[index] = { ...convs[index], status: 'owned', ownerId: agentId, updatedAt: Date.now() };
         await this.setStorage(key, convs);
-        return updated;
+        await this.emitEvent(tenantId, 'agent.assigned', convs[index]);
+        return convs[index];
     }
     async getMessages(conversationId: string): Promise<Message[]> {
         return (await this.getStorage<Message[]>(`messages:${conversationId}`)) || [];
     }
     async sendMessage(msg: Message): Promise<Message> {
         const key = `messages:${msg.conversationId}`;
-        const msgs = (await this.getStorage<Message[]>(key)) || [];
+        const msgs = await this.getMessages(msg.conversationId);
         msgs.push(msg);
         await this.setStorage(key, msgs);
         return msg;
