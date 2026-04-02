@@ -1,45 +1,60 @@
 import React, { useState } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ApiResponse, Tenant, User, UserRole } from '@shared/types';
+import { ApiResponse, Tenant, User, GlobalMetrics } from '@shared/types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { Plus, Globe, Shield, Activity, Search, Users as UsersIcon, Trash2, UserPlus } from 'lucide-react';
+import { Plus, Globe, Shield, Activity, Users as UsersIcon, Trash2, UserPlus, Database, ExternalLink, AlertTriangle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { useAuthStore } from '@/lib/store';
 export function SuperAdmin() {
   const queryClient = useQueryClient();
+  const token = useAuthStore(s => s.token);
+  const setSelectedTenantId = useAuthStore(s => s.setSelectedTenantId);
   const [newTenantName, setNewTenantName] = useState('');
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   // Queries
-  const { data: tenants = [], isLoading: loadingTenants } = useQuery({
+  const { data: tenants = [] } = useQuery({
     queryKey: ['superadmin', 'tenants'],
     queryFn: async () => {
-      const res = await fetch('/api/superadmin/tenants');
+      const res = await fetch('/api/superadmin/tenants', { headers: { 'Authorization': `Bearer ${token}` } });
       const json = await res.json() as ApiResponse<Tenant[]>;
       return json.data ?? [];
-    }
+    },
+    enabled: !!token
   });
-  const { data: users = [], isLoading: loadingUsers } = useQuery({
+  const { data: users = [] } = useQuery({
     queryKey: ['superadmin', 'users'],
     queryFn: async () => {
-      const res = await fetch('/api/superadmin/users');
+      const res = await fetch('/api/superadmin/users', { headers: { 'Authorization': `Bearer ${token}` } });
       const json = await res.json() as ApiResponse<User[]>;
       return json.data ?? [];
-    }
+    },
+    enabled: !!token
+  });
+  const { data: metrics } = useQuery({
+    queryKey: ['superadmin', 'health'],
+    queryFn: async () => {
+      const res = await fetch('/api/admin/stats', { headers: { 'Authorization': `Bearer ${token}` } });
+      const json = await res.json() as ApiResponse<GlobalMetrics>;
+      return json.data;
+    },
+    refetchInterval: 30000,
+    enabled: !!token
   });
   // Mutations
   const createTenantMutation = useMutation({
     mutationFn: async (name: string) => {
       const res = await fetch('/api/superadmin/tenants', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name })
       });
       return await res.json();
@@ -54,7 +69,7 @@ export function SuperAdmin() {
     mutationFn: async (userData: any) => {
       const res = await fetch('/api/superadmin/users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(userData)
       });
       return await res.json();
@@ -67,37 +82,54 @@ export function SuperAdmin() {
   });
   const deleteUserMutation = useMutation({
     mutationFn: async (id: string) => {
-      await fetch(`/api/superadmin/users/${id}`, { method: 'DELETE' });
+      await fetch(`/api/superadmin/users/${id}`, { 
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` } 
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'users'] });
       toast.success('User deleted');
     }
   });
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      await fetch('/api/seed', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+    },
+    onSuccess: () => {
+      toast.success('Database seeded and reset to defaults');
+      queryClient.invalidateQueries();
+    }
+  });
   const stats = [
-    { label: 'Total Tenants', value: tenants.length, icon: Globe, color: 'text-cyan-600' },
-    { label: 'Platform Users', value: users.length, icon: UsersIcon, color: 'text-indigo-600' },
-    { label: 'Platform Health', value: '100%', icon: Shield, color: 'text-green-600' }
+    { label: 'Total Tenants', value: tenants.length, icon: Globe, color: 'text-cyan-600', bg: 'bg-cyan-50' },
+    { label: 'Platform Users', value: users.length, icon: UsersIcon, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+    { label: 'Total Traffic', value: metrics?.totalMessages?.toLocaleString() || '0', icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50' }
   ];
   return (
     <MainLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-10 lg:py-12">
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Platform Oversight</h1>
-            <p className="text-muted-foreground">Global management for all Mercury tenants and users.</p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">Platform Oversight</h1>
+            <p className="text-muted-foreground text-sm">Global control plane for tenants, users, and infrastructure health.</p>
+          </div>
+          <div className="flex gap-2">
+             <Button variant="outline" className="gap-2 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => resetMutation.mutate()}>
+               <Database className="w-4 h-4" /> Seed/Reset System
+             </Button>
           </div>
         </div>
         <div className="grid md:grid-cols-3 gap-6 mb-8">
           {stats.map((s) => (
-            <Card key={s.label}>
+            <Card key={s.label} className="border-none shadow-sm bg-white overflow-hidden ring-1 ring-slate-200">
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">{s.label}</p>
-                    <h3 className="text-2xl font-bold mt-1">{s.value}</h3>
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{s.label}</p>
+                    <h3 className="text-3xl font-bold mt-1 text-slate-900">{s.value}</h3>
                   </div>
-                  <div className={`p-3 rounded-xl bg-slate-50 ${s.color}`}>
+                  <div className={`p-4 rounded-2xl ${s.bg} ${s.color}`}>
                     <s.icon className="w-6 h-6" />
                   </div>
                 </div>
@@ -106,53 +138,67 @@ export function SuperAdmin() {
           ))}
         </div>
         <Tabs defaultValue="tenants" className="space-y-6">
-          <TabsList className="bg-slate-100 p-1">
-            <TabsTrigger value="tenants" className="gap-2"><Globe className="w-4 h-4" /> Tenants</TabsTrigger>
-            <TabsTrigger value="users" className="gap-2"><UsersIcon className="w-4 h-4" /> Users</TabsTrigger>
+          <TabsList className="bg-slate-100 p-1 rounded-xl">
+            <TabsTrigger value="tenants" className="gap-2 rounded-lg px-6"><Globe className="w-4 h-4" /> Tenants</TabsTrigger>
+            <TabsTrigger value="users" className="gap-2 rounded-lg px-6"><UsersIcon className="w-4 h-4" /> Users</TabsTrigger>
+            <TabsTrigger value="health" className="gap-2 rounded-lg px-6"><Activity className="w-4 h-4" /> Platform Health</TabsTrigger>
           </TabsList>
-          <TabsContent value="tenants">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <TabsContent value="tenants" className="space-y-6">
+            <Card className="border-none shadow-sm ring-1 ring-slate-200">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b">
                 <div>
-                  <CardTitle>Tenants</CardTitle>
+                  <CardTitle className="text-lg">Tenant Directory</CardTitle>
                   <CardDescription>Manage multi-tenant logical isolation and sites.</CardDescription>
                 </div>
                 <div className="flex gap-2">
                   <Input
-                    placeholder="Tenant Name"
-                    className="w-48"
+                    placeholder="New Tenant Name"
+                    className="w-48 bg-slate-50"
                     value={newTenantName}
                     onChange={(e) => setNewTenantName(e.target.value)}
                   />
-                  <Button className="bg-slate-900 gap-2" onClick={() => createTenantMutation.mutate(newTenantName)} disabled={!newTenantName}>
-                    <Plus className="w-4 h-4" /> Create Tenant
+                  <Button className="bg-slate-900 hover:bg-slate-800 gap-2" onClick={() => createTenantMutation.mutate(newTenantName)} disabled={!newTenantName}>
+                    <Plus className="w-4 h-4" /> Create
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-0">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Tenant Name</TableHead>
+                    <TableRow className="bg-slate-50/50">
+                      <TableHead className="w-[300px]">Tenant Name</TableHead>
                       <TableHead>Default Site Key</TableHead>
                       <TableHead>Queues</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="text-right px-6">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {loadingTenants ? (
-                      <TableRow><TableCell colSpan={5} className="text-center py-10">Loading tenants...</TableCell></TableRow>
-                    ) : (tenants ?? []).map((t) => (
+                    {(tenants ?? []).map((t) => (
                       <TableRow key={t.id}>
-                        <TableCell className="font-medium">{t.name}</TableCell>
-                        <TableCell className="font-mono text-xs">{t.sites?.[0]?.key || 'None'}</TableCell>
-                        <TableCell>{t.queues?.length ?? 0} active</TableCell>
+                        <TableCell className="font-bold text-slate-800 py-4">{t.name}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{t.sites?.[0]?.key || 'No Sites'}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Active</Badge>
+                          <Badge variant="secondary" className="bg-slate-100">{t.queues?.length ?? 0} active</Badge>
                         </TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm">Manage</Button>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            <span className="text-xs font-medium">Provisioned</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right px-6">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="gap-2 h-8"
+                            onClick={() => {
+                              setSelectedTenantId(t.id);
+                              toast.info(`Switched context to ${t.name}`);
+                            }}
+                          >
+                            <ExternalLink className="w-3 h-3" /> Manage
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -161,12 +207,12 @@ export function SuperAdmin() {
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="users">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <TabsContent value="users" className="space-y-6">
+            <Card className="border-none shadow-sm ring-1 ring-slate-200">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b">
                 <div>
-                  <CardTitle>Platform Users</CardTitle>
-                  <CardDescription>Provision agents and administrators across all tenants.</CardDescription>
+                  <CardTitle className="text-lg">User Provisioning</CardTitle>
+                  <CardDescription>Assign agents and administrators across any tenant.</CardDescription>
                 </div>
                 <Dialog open={isUserModalOpen} onOpenChange={setIsUserModalOpen}>
                   <DialogTrigger asChild>
@@ -174,9 +220,10 @@ export function SuperAdmin() {
                       <UserPlus className="w-4 h-4" /> Provision User
                     </Button>
                   </DialogTrigger>
-                  <DialogContent>
+                  <DialogContent className="sm:max-w-[500px]">
                     <DialogHeader>
                       <DialogTitle>Provision New User</DialogTitle>
+                      <CardDescription>Users can be assigned to a specific tenant or kept as global admins.</CardDescription>
                     </DialogHeader>
                     <form className="space-y-4 py-4" onSubmit={(e) => {
                       e.preventDefault();
@@ -206,57 +253,56 @@ export function SuperAdmin() {
                         <div className="space-y-2">
                           <Label htmlFor="tenantId">Tenant Assignment</Label>
                           <Select name="tenantId">
-                            <SelectTrigger><SelectValue placeholder="Select Tenant" /></SelectTrigger>
+                            <SelectTrigger><SelectValue placeholder="No assignment" /></SelectTrigger>
                             <SelectContent>
                               {tenants.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>
                       </div>
-                      <DialogFooter className="pt-4">
-                        <Button type="submit" disabled={createUserMutation.isPending}>
-                          {createUserMutation.isPending ? 'Provisioning...' : 'Provision User'}
+                      <DialogFooter className="pt-6">
+                        <Button type="submit" className="w-full bg-slate-900" disabled={createUserMutation.isPending}>
+                          {createUserMutation.isPending ? 'Provisioning...' : 'Complete Provisioning'}
                         </Button>
                       </DialogFooter>
                     </form>
                   </DialogContent>
                 </Dialog>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-0">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>User</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Tenant</TableHead>
+                    <TableRow className="bg-slate-50/50">
+                      <TableHead className="px-6">Identity</TableHead>
+                      <TableHead>Access Role</TableHead>
+                      <TableHead>Tenant Assignment</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead className="text-right px-6">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {loadingUsers ? (
-                      <TableRow><TableCell colSpan={5} className="text-center py-10">Loading users...</TableCell></TableRow>
-                    ) : (users ?? []).map((u) => (
+                    {(users ?? []).map((u) => (
                       <TableRow key={u.id}>
-                        <TableCell>
-                          <div className="font-medium">{u.name}</div>
+                        <TableCell className="px-6 py-4">
+                          <div className="font-bold text-slate-800">{u.name}</div>
                           <div className="text-xs text-muted-foreground font-mono">{u.email}</div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="capitalize">
+                          <Badge variant="outline" className="capitalize font-semibold border-slate-200">
                             {u.role.replace('_', ' ')}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {tenants.find(t => t.id === u.tenantId)?.name || <span className="text-muted-foreground italic">None (Global)</span>}
+                          {tenants.find(t => t.id === u.tenantId)?.name || <span className="text-muted-foreground italic text-xs">Mercury Global</span>}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={u.isActive ? 'default' : 'secondary'} className={u.isActive ? 'bg-cyan-500' : ''}>
-                            {u.isActive ? 'Active' : 'Inactive'}
-                          </Badge>
+                          <div className="flex items-center gap-1.5">
+                            <div className={cn("w-1.5 h-1.5 rounded-full", u.isActive ? "bg-cyan-500" : "bg-slate-300")} />
+                            <span className="text-xs font-medium">{u.isActive ? 'Active' : 'Suspended'}</span>
+                          </div>
                         </TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" className="text-destructive" onClick={() => deleteUserMutation.mutate(u.id)}>
+                        <TableCell className="text-right px-6">
+                          <Button variant="ghost" size="icon" className="text-slate-400 hover:text-rose-600 transition-colors" onClick={() => deleteUserMutation.mutate(u.id)}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </TableCell>
@@ -266,6 +312,46 @@ export function SuperAdmin() {
                 </Table>
               </CardContent>
             </Card>
+          </TabsContent>
+          <TabsContent value="health" className="space-y-6">
+            <div className="grid md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Platform Availability</CardTitle>
+                  <CardDescription>Real-time system uptime tracking.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col items-center justify-center py-10">
+                   <div className="relative w-40 h-40">
+                      <svg className="w-full h-full" viewBox="0 0 100 100">
+                         <circle className="text-slate-100 stroke-current" strokeWidth="8" fill="transparent" r="40" cx="50" cy="50" />
+                         <circle className="text-emerald-500 stroke-current" strokeWidth="8" strokeDasharray="251.2" strokeDashoffset="0" strokeLinecap="round" fill="transparent" r="40" cx="50" cy="50" />
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center">
+                         <span className="text-2xl font-black text-slate-900">{metrics?.uptime || '99.9%'}</span>
+                         <span className="text-[10px] text-muted-foreground font-bold uppercase">Uptime</span>
+                      </div>
+                   </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Maintenance Controls</CardTitle>
+                  <CardDescription>Critical platform-level operations.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-xl border border-amber-100 text-amber-800">
+                    <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold">Safe Mode Inactive</p>
+                      <p className="text-[10px] leading-relaxed">Platform is currently in developer mode. Database resets will wipe all production tenant configurations and conversation logs.</p>
+                    </div>
+                  </div>
+                  <Button variant="destructive" className="w-full font-bold shadow-lg shadow-rose-200" onClick={() => resetMutation.mutate()}>
+                    Factory Reset Platform
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>

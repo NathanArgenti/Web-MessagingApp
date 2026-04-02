@@ -3,7 +3,7 @@ import { enableMapSet } from "immer";
 enableMapSet();
 import React, { StrictMode } from 'react';
 import { createRoot, Root } from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, Navigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
@@ -13,6 +13,7 @@ import { LoginPage } from '@/pages/LoginPage';
 import { AgentDashboard } from '@/pages/AgentDashboard';
 import { TenantAdmin } from '@/pages/TenantAdmin';
 import { WPIntegration } from '@/pages/WPIntegration';
+import { SuperAdmin } from '@/pages/SuperAdmin';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { Toaster } from 'sonner';
 const queryClient = new QueryClient({
@@ -29,7 +30,7 @@ const router = createBrowserRouter([
   {
     path: "/agent",
     element: (
-      <AuthGuard roles={['agent', 'tenant_admin']}>
+      <AuthGuard roles={['agent', 'tenant_admin']} preventSuperAdmin>
         <AgentDashboard />
       </AuthGuard>
     ),
@@ -57,11 +58,12 @@ const router = createBrowserRouter([
     path: "/superadmin",
     element: (
       <AuthGuard roles={['superadmin']}>
-        <TenantAdmin />
+        <SuperAdmin />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,
   },
+  { path: "*", element: <Navigate to="/" replace /> }
 ]);
 const container = document.getElementById('root');
 if (container) {
