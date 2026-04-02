@@ -7,13 +7,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { useAuthStore } from '@/lib/store';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Save, Plus, Trash2, Globe, Shield, LayoutGrid, Monitor, ListFilter } from 'lucide-react';
-import { Queue, Workflow, TenantSite, ApiResponse, User } from '@shared/types';
+import { Save, Plus, Trash2, Globe, Shield, LayoutGrid, Monitor, ListFilter, Users as UsersIcon, UserPlus } from 'lucide-react';
+import { Queue, TenantSite, ApiResponse, User } from '@shared/types';
 import { nanoid } from 'nanoid';
 export function TenantAdmin() {
+  const queryClient = useQueryClient();
   const tenant = useAuthStore(s => s.tenant);
   const token = useAuthStore(s => s.token);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
@@ -24,6 +27,7 @@ export function TenantAdmin() {
   const [queues, setQueues] = useState<Queue[]>(tenant?.queues ?? []);
   const [sites, setSites] = useState<TenantSite[]>(tenant?.sites ?? []);
   const [isSaving, setIsSaving] = useState(false);
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
   const { data: agents = [] } = useQuery({
     queryKey: ['admin', 'agents', selectedTenantId],
     queryFn: async () => {
@@ -34,6 +38,25 @@ export function TenantAdmin() {
       return json.data ?? [];
     },
     enabled: !!token && !!selectedTenantId
+  });
+  const inviteMutation = useMutation({
+    mutationFn: async (data: { email: string, name: string }) => {
+      const res = await fetch('/api/admin/agents/invite', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': selectedTenantId || ''
+        },
+        body: JSON.stringify(data)
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'agents'] });
+      setIsInviteOpen(false);
+      toast.success('Agent invited successfully. Temporary login: Use email to login.');
+    }
   });
   const handleSave = async () => {
     setIsSaving(true);
@@ -59,8 +82,18 @@ export function TenantAdmin() {
       setIsSaving(false);
     }
   };
+  const toggleAgentInQueue = (queueIdx: number, agentId: string) => {
+    const newQueues = [...queues];
+    const current = newQueues[queueIdx].assignedAgentIds || [];
+    if (current.includes(agentId)) {
+      newQueues[queueIdx].assignedAgentIds = current.filter(id => id !== agentId);
+    } else {
+      newQueues[queueIdx].assignedAgentIds = [...current, agentId];
+    }
+    setQueues(newQueues);
+  };
   const addQueue = () => {
-    setQueues([...queues, { id: nanoid(), tenantId: tenant?.id || '', name: 'New Queue', priority: 0, capacityMax: 10, isDeleted: false }]);
+    setQueues([...queues, { id: nanoid(), tenantId: tenant?.id || '', name: 'New Queue', priority: 0, capacityMax: 10, isDeleted: false, assignedAgentIds: [] }]);
   };
   const addSite = () => {
     setSites([...sites, { id: nanoid(), name: 'New Site', key: nanoid(10) }]);
@@ -73,10 +106,30 @@ export function TenantAdmin() {
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Tenant Settings</h1>
             <p className="text-muted-foreground">Manage your multi-site orchestration and routing policies.</p>
           </div>
-          <Button onClick={handleSave} disabled={isSaving} className="bg-slate-900 gap-2">
-            <Save className="w-4 h-4" />
-            {isSaving ? 'Saving...' : 'Save All Changes'}
-          </Button>
+          <div className="flex gap-2">
+            <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2">
+                  <UserPlus className="w-4 h-4" /> Invite Agent
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Invite New Agent</DialogTitle></DialogHeader>
+                <form className="space-y-4 py-4" onSubmit={(e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.currentTarget);
+                  inviteMutation.mutate({ email: fd.get('email') as string, name: fd.get('name') as string });
+                }}>
+                  <div className="space-y-2"><Label>Name</Label><Input name="name" required /></div>
+                  <div className="space-y-2"><Label>Email</Label><Input name="email" type="email" required /></div>
+                  <DialogFooter><Button type="submit">Send Invite</Button></DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+            <Button onClick={handleSave} disabled={isSaving} className="bg-slate-900 gap-2">
+              <Save className="w-4 h-4" /> {isSaving ? 'Saving...' : 'Save All Changes'}
+            </Button>
+          </div>
         </div>
         <Tabs defaultValue="sites" className="w-full space-y-6">
           <TabsList className="bg-slate-100 p-1">
@@ -112,9 +165,7 @@ export function TenantAdmin() {
                       <Select value={site.defaultQueueId} onValueChange={v => {
                         const n = [...sites]; n[idx].defaultQueueId = v; setSites(n);
                       }}>
-                        <SelectTrigger className="bg-white">
-                          <SelectValue placeholder="Select queue" />
-                        </SelectTrigger>
+                        <SelectTrigger className="bg-white"><SelectValue placeholder="Select queue" /></SelectTrigger>
                         <SelectContent>
                           {queues.map(q => <SelectItem key={q.id} value={q.id}>{q.name}</SelectItem>)}
                         </SelectContent>
@@ -138,7 +189,7 @@ export function TenantAdmin() {
               </CardHeader>
               <CardContent className="space-y-4">
                 {queues.map((q, idx) => (
-                  <div key={q.id} className="p-5 border rounded-xl space-y-4 bg-white shadow-sm relative overflow-hidden">
+                  <div key={q.id} className="p-5 border rounded-xl space-y-6 bg-white shadow-sm relative overflow-hidden">
                     <div className="grid md:grid-cols-4 gap-6">
                       <div className="space-y-1">
                         <Label>Queue Name</Label>
@@ -156,6 +207,23 @@ export function TenantAdmin() {
                         <Button variant="ghost" size="icon" className="text-destructive" onClick={() => {
                            const n = [...queues]; n[idx].isDeleted = true; setQueues(n);
                         }}><Trash2 className="w-4 h-4" /></Button>
+                      </div>
+                    </div>
+                    <div className="pt-4 border-t">
+                      <h4 className="text-xs font-bold uppercase text-slate-400 mb-3 flex items-center gap-2">
+                        <UsersIcon className="w-3 h-3" /> Assigned Agents
+                      </h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {agents.map(agent => (
+                          <div key={agent.id} className="flex items-center space-x-2">
+                            <Checkbox 
+                              id={`${q.id}-${agent.id}`} 
+                              checked={(q.assignedAgentIds || []).includes(agent.id)}
+                              onCheckedChange={() => toggleAgentInQueue(idx, agent.id)}
+                            />
+                            <Label htmlFor={`${q.id}-${agent.id}`} className="text-xs cursor-pointer">{agent.name}</Label>
+                          </div>
+                        ))}
                       </div>
                     </div>
                     {q.isDeleted && <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] flex items-center justify-center font-bold text-destructive">Queued for deletion</div>}
@@ -227,19 +295,6 @@ export function TenantAdmin() {
                           <p className="text-xs text-muted-foreground">Allows agents to login via email without SSO for testing.</p>
                        </div>
                        <Button variant="outline">Enabled</Button>
-                    </div>
-                    <div className="space-y-4 pt-4">
-                       <Label>Entra ID Configuration (Microsoft SSO)</Label>
-                       <div className="grid gap-4">
-                          <div className="space-y-1">
-                             <Label className="text-[10px] uppercase">Client ID</Label>
-                             <Input placeholder="00000000-0000-0000-0000-000000000000" />
-                          </div>
-                          <div className="space-y-1">
-                             <Label className="text-[10px] uppercase">Tenant ID</Label>
-                             <Input placeholder="00000000-0000-0000-0000-000000000000" />
-                          </div>
-                       </div>
                     </div>
                  </div>
               </CardContent>

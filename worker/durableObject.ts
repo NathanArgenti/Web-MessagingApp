@@ -2,7 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 import type {
     User, Tenant, Queue, Conversation, Message, PresenceStatus,
     PublicConfig, SystemEvent, EventType, ConversationStatus,
-    OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite
+    OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite,
+    UserCreateInput, UserUpdateInput
 } from '@shared/types';
 import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
@@ -14,16 +15,16 @@ export class GlobalDurableObject extends DurableObject {
     }
     async seedDatabase(): Promise<boolean> {
         const queues: Queue[] = [
-            { id: 'q1', tenantId: 't1', name: 'General Support', priority: 1, capacityMax: 10, isDeleted: false },
-            { id: 'q2', tenantId: 't1', name: 'Sales', priority: 2, capacityMax: 5, isDeleted: false }
+            { id: 'q1', tenantId: 't1', name: 'General Support', priority: 1, capacityMax: 10, isDeleted: false, assignedAgentIds: ['u3'] },
+            { id: 'q2', tenantId: 't1', name: 'Sales', priority: 2, capacityMax: 5, isDeleted: false, assignedAgentIds: [] }
         ];
         const tenants: Tenant[] = [
             {
                 id: 't1',
                 name: 'Acme Corp',
                 sites: [{ id: 's1', name: 'Main Site', key: 'acme-123', defaultQueueId: 'q1' }],
-                branding: { 
-                  primaryColor: '#06B6D4', 
+                branding: {
+                  primaryColor: '#06B6D4',
                   welcomeMessage: 'Welcome to Acme Support!',
                   widgetPosition: 'bottom-right',
                   themePreset: 'modern'
@@ -31,29 +32,55 @@ export class GlobalDurableObject extends DurableObject {
                 queues: [queues[0], queues[1]],
                 workflows: [],
                 authPolicy: { allowLocalAuth: true }
-            },
-            {
-                id: 't2',
-                name: 'Globex',
-                sites: [{ id: 's2', name: 'Global Portal', key: 'globex-456' }],
-                branding: { 
-                  primaryColor: '#F38020', 
-                  welcomeMessage: 'How can Globex help today?',
-                  widgetPosition: 'bottom-right',
-                  themePreset: 'glass'
-                },
-                queues: [],
-                workflows: [],
-                authPolicy: { allowLocalAuth: true }
             }
         ];
         const users: User[] = [
-            { id: 'u1', email: 'admin@mercury.com', name: 'Global Admin', role: 'superadmin', isOnline: true, presenceStatus: 'online' },
-            { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online' },
-            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline' }
+            { id: 'u1', email: 'admin@mercury.com', name: 'Global Admin', role: 'superadmin', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() },
+            { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() },
+            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline', isActive: true, createdAt: Date.now() }
         ];
         await this.setStorage('tenants', tenants);
         await this.setStorage('users', users);
+        return true;
+    }
+    async getUsers(tenantId?: string, role?: string): Promise<User[]> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        return users.filter(u => {
+            if (tenantId && u.tenantId !== tenantId) return false;
+            if (role && u.role !== role) return false;
+            return true;
+        });
+    }
+    async upsertUser(input: UserCreateInput & { id?: string }): Promise<User> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const existingIdx = users.findIndex(u => u.id === input.id || u.email === input.email);
+        if (existingIdx > -1) {
+            const updated = { ...users[existingIdx], ...input, id: users[existingIdx].id };
+            users[existingIdx] = updated as User;
+            await this.setStorage('users', users);
+            return users[existingIdx];
+        }
+        const newUser: User = {
+            id: input.id || nanoid(),
+            email: input.email,
+            name: input.name,
+            role: input.role,
+            tenantId: input.tenantId,
+            isActive: true,
+            isOnline: false,
+            presenceStatus: 'offline',
+            createdAt: Date.now(),
+            passwordHashStub: 'mock_hash'
+        };
+        users.push(newUser);
+        await this.setStorage('users', users);
+        return newUser;
+    }
+    async deleteUser(userId: string): Promise<boolean> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const filtered = users.filter(u => u.id !== userId);
+        if (filtered.length === users.length) return false;
+        await this.setStorage('users', filtered);
         return true;
     }
     async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
@@ -73,6 +100,21 @@ export class GlobalDurableObject extends DurableObject {
             }
         }
         return null;
+    }
+    async updateTenantSettings(tenantId: string, settings: Partial<Tenant>): Promise<Tenant | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const idx = tenants.findIndex(t => t.id === tenantId);
+        if (idx === -1) return null;
+        // Ensure assignedAgentIds is always an array for all queues
+        if (settings.queues) {
+            settings.queues = settings.queues.map(q => ({
+                ...q,
+                assignedAgentIds: q.assignedAgentIds || []
+            }));
+        }
+        tenants[idx] = { ...tenants[idx], ...settings };
+        await this.setStorage('tenants', tenants);
+        return tenants[idx];
     }
     async createVisitorConversation(siteKey: string, queueId: string, contact: { name: string, email?: string }): Promise<Conversation | null> {
         const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
@@ -97,7 +139,7 @@ export class GlobalDurableObject extends DurableObject {
         const existingConvs = (await this.getStorage<Conversation[]>(conversationsKey)) || [];
         const activeInQueue = existingConvs.filter(c => c.queueId === finalQueue?.id && c.status !== 'ended').length;
         if (finalQueue.capacityMax && activeInQueue >= finalQueue.capacityMax) {
-            return null; // Capacity reached
+            return null; 
         }
         const newConv: Conversation = {
             id: nanoid(),
@@ -116,18 +158,6 @@ export class GlobalDurableObject extends DurableObject {
         await this.setStorage('conversations_index', index);
         await this.emitEvent(targetTenant.id, 'conversation.started', newConv);
         return newConv;
-    }
-    async getTenantAgents(tenantId: string): Promise<User[]> {
-        const users = (await this.getStorage<User[]>('users')) || [];
-        return users.filter(u => u.tenantId === tenantId && (u.role === 'agent' || u.role === 'tenant_admin'));
-    }
-    async updateTenantSettings(tenantId: string, settings: Partial<Tenant>): Promise<Tenant | null> {
-        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
-        const idx = tenants.findIndex(t => t.id === tenantId);
-        if (idx === -1) return null;
-        tenants[idx] = { ...tenants[idx], ...settings };
-        await this.setStorage('tenants', tenants);
-        return tenants[idx];
     }
     async emitEvent(tenantId: string, type: EventType, payload: any): Promise<void> {
         const outbox = (await this.getStorage<SystemEvent[]>('outbox')) || [];
@@ -157,26 +187,6 @@ export class GlobalDurableObject extends DurableObject {
             event.processed = true;
         }
         await this.setStorage('outbox', outbox.filter(e => !e.processed));
-    }
-    async getOfflineRequests(tenantId: string): Promise<OfflineRequest[]> {
-        return (await this.getStorage<OfflineRequest[]>(`tenant:${tenantId}:offline_requests`)) || [];
-    }
-    async createOfflineRequest(req: Omit<OfflineRequest, 'id' | 'createdAt' | 'status'>): Promise<OfflineRequest> {
-        const newReq: OfflineRequest = { ...req, id: nanoid(), status: 'pending', createdAt: Date.now() };
-        const key = `tenant:${req.tenantId}:offline_requests`;
-        const existing = await this.getOfflineRequests(req.tenantId);
-        existing.push(newReq);
-        await this.setStorage(key, existing);
-        return newReq;
-    }
-    async dispatchOfflineRequest(tenantId: string, requestId: string, agentName: string): Promise<boolean> {
-        const key = `tenant:${tenantId}:offline_requests`;
-        const requests = await this.getOfflineRequests(tenantId);
-        const idx = requests.findIndex(r => r.id === requestId);
-        if (idx === -1) return false;
-        requests[idx] = { ...requests[idx], status: 'dispatched', dispatchTimestamp: Date.now(), dispatchedBy: agentName };
-        await this.setStorage(key, requests);
-        return true;
     }
     async getSystemMetrics(tenantId: string): Promise<SystemMetrics> {
         const conversations = (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
@@ -216,7 +226,7 @@ export class GlobalDurableObject extends DurableObject {
     }
     async login(email: string): Promise<{ user: User; token: string; tenant?: Tenant; availableTenants: any[] } | null> {
         const users = (await this.getStorage<User[]>('users')) || [];
-        const user = users.find(u => u.email === email);
+        const user = users.find(u => u.email === email && u.isActive);
         if (!user) return null;
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);
@@ -227,7 +237,7 @@ export class GlobalDurableObject extends DurableObject {
         if (parts.length < 3) return null;
         const userId = parts[2];
         const users = (await this.getStorage<User[]>('users')) || [];
-        const user = users.find(u => u.id === userId);
+        const user = users.find(u => u.id === userId && u.isActive);
         if (!user) return null;
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);

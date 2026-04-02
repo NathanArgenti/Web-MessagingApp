@@ -9,6 +9,23 @@ export interface User {
   avatarUrl?: string;
   isOnline: boolean;
   presenceStatus?: PresenceStatus;
+  isActive: boolean;
+  createdAt: number;
+  lastLogin?: number;
+  passwordHashStub?: string;
+}
+export interface UserCreateInput {
+  email: string;
+  name: string;
+  role: UserRole;
+  tenantId?: string;
+  password?: string;
+}
+export interface UserUpdateInput {
+  name?: string;
+  role?: UserRole;
+  tenantId?: string;
+  isActive?: boolean;
 }
 export type OfflineRequestStatus = 'pending' | 'dispatched';
 export interface OfflineRequest {
@@ -30,8 +47,8 @@ export interface MetricPoint {
 }
 export interface SystemMetrics {
   hourlyMessageVolume: MetricPoint[];
-  avgResponseTime: number; 
-  resolutionRate: number; 
+  avgResponseTime: number;
+  resolutionRate: number;
   activeAgents: number;
   totalConvs: number;
 }
@@ -92,7 +109,7 @@ export interface Queue {
   tenantId: string;
   name: string;
   description?: string;
-  assignedAgentIds?: string[];
+  assignedAgentIds: string[];
   capacityMax?: number;
   priority?: number;
   isDeleted?: boolean;

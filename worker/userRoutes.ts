@@ -3,7 +3,8 @@ import { Env } from './core-utils';
 import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant } from '@shared/types';
 import { nanoid } from 'nanoid';
 type HonoApp = Hono<{ Bindings: Env }>;
-export function userRoutes(app: HonoApp) {
+export function userRoutes(rawApp: any) {
+    const app = rawApp as HonoApp;
     const getTenantId = (c: any) => c.req.header('X-Tenant-ID');
     // PUBLIC
     app.get('/api/public/config/:siteKey', async (c) => {
@@ -19,13 +20,21 @@ export function userRoutes(app: HonoApp) {
         const data = await stub.createVisitorConversation(siteKey, queueId, { name, email });
         return c.json({ success: !!data, data, error: !data ? 'Queue capacity reached or invalid' : undefined } as ApiResponse<any>);
     });
-    // INTERNAL ADMIN
+    // INTERNAL ADMIN (Tenants & Agents)
     app.get('/api/admin/agents', async (c) => {
         const tenantId = getTenantId(c);
         if (!tenantId) return c.json({ success: false, error: 'Missing tenant context' } as ApiResponse<any>, 400);
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
-        const data = await stub.getTenantAgents(tenantId);
-        return c.json({ success: true, data } as ApiResponse<User[]>);
+        const data = await stub.getUsers(tenantId, 'agent');
+        const admins = await stub.getUsers(tenantId, 'tenant_admin');
+        return c.json({ success: true, data: [...data, ...admins] } as ApiResponse<User[]>);
+    });
+    app.post('/api/admin/agents/invite', async (c) => {
+        const tenantId = getTenantId(c);
+        const { email, name } = await c.req.json();
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.upsertUser({ email, name, role: 'agent', tenantId });
+        return c.json({ success: true, data } as ApiResponse<User>);
     });
     app.put('/api/admin/settings', async (c) => {
         const tenantId = getTenantId(c);
@@ -33,6 +42,24 @@ export function userRoutes(app: HonoApp) {
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         const data = await stub.updateTenantSettings(tenantId, body);
         return c.json({ success: !!data, data } as ApiResponse<Tenant>);
+    });
+    // SUPERADMIN
+    app.get('/api/superadmin/users', async (c) => {
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.getUsers();
+        return c.json({ success: true, data } as ApiResponse<User[]>);
+    });
+    app.post('/api/superadmin/users', async (c) => {
+        const body = await c.req.json();
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.upsertUser(body);
+        return c.json({ success: true, data } as ApiResponse<User>);
+    });
+    app.delete('/api/superadmin/users/:id', async (c) => {
+        const id = c.req.param('id');
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const success = await stub.deleteUser(id);
+        return c.json({ success } as ApiResponse<boolean>);
     });
     // CONVERSATIONS & MESSAGING
     app.get('/api/conversations', async (c) => {
