@@ -150,18 +150,34 @@ export function userRoutes(rawApp: any) {
     app.post('/api/conversations/:id/messages', async (c) => {
         const id = c.req.param('id');
         const body = await c.req.json();
+        if (!body?.content) return c.json({ success: false, error: 'Missing content' }, 400);
+        
         const token = getAuthToken(c);
         const stub = getStub(c);
-        const me = await stub.getMe(token);
-        if (!me || !me.user || !body?.content) return c.json({ success: false, error: 'Unauthorized or missing content' }, 401);
-        const message: Message = {
-            id: nanoid(),
-            conversationId: id,
-            senderId: me.user.id,
-            senderType: 'agent',
-            content: body.content,
-            timestamp: Date.now()
-        };
+        
+        let message: Message;
+        if (token) {
+            const me = await stub.getMe(token);
+            if (!me || !me.user) return c.json({ success: false, error: 'Unauthorized' }, 401);
+            message = {
+                id: nanoid(),
+                conversationId: id,
+                senderId: me.user.id,
+                senderType: 'agent',
+                content: body.content,
+                timestamp: Date.now()
+            };
+        } else {
+            message = {
+                id: nanoid(),
+                conversationId: id,
+                senderId: 'visitor',
+                senderType: 'visitor',
+                content: body.content,
+                timestamp: Date.now()
+            };
+        }
+        
         const data = await stub.sendMessage(message);
         return c.json({ success: true, data } as ApiResponse<Message>);
     });

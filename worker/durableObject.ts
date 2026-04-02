@@ -15,8 +15,8 @@ export class GlobalDurableObject extends DurableObject {
     }
     async seedDatabase(): Promise<boolean> {
         const queues: Queue[] = [
-            { id: 'q1', tenantId: 't1', name: 'General Support', priority: 1, capacityMax: 10, isDeleted: false, assignedAgentIds: ['u3'] },
-            { id: 'q2', tenantId: 't1', name: 'Sales', priority: 2, capacityMax: 5, isDeleted: false, assignedAgentIds: [] }
+            { id: 'q1', tenantId: 't1', name: 'General Support', priority: 10, capacityMax: 10, isDeleted: false, assignedAgentIds: ['u3'] },
+            { id: 'q2', tenantId: 't1', name: 'Sales', priority: 5, capacityMax: 5, isDeleted: false, assignedAgentIds: [] }
         ];
         const tenants: Tenant[] = [
             {
@@ -37,7 +37,7 @@ export class GlobalDurableObject extends DurableObject {
         const users: User[] = [
             { id: 'u1', email: 'admin@mercury.com', name: 'Global Admin', role: 'superadmin', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() },
             { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() },
-            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline', isActive: true, createdAt: Date.now() }
+            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() }
         ];
         await this.setStorage('tenants', tenants);
         await this.setStorage('users', users);
@@ -130,12 +130,13 @@ export class GlobalDurableObject extends DurableObject {
         if (tIdx === -1) return false;
         const qIdx = tenants[tIdx].queues?.findIndex(q => q.id === queueId);
         if (qIdx === -1 || qIdx === undefined) return false;
-        const assigned = tenants[tIdx].queues[qIdx].assignedAgentIds || [];
+        let assigned = tenants[tIdx].queues[qIdx].assignedAgentIds || [];
         if (action === 'join') {
             if (!assigned.includes(userId)) assigned.push(userId);
         } else {
-            tenants[tIdx].queues[qIdx].assignedAgentIds = assigned.filter(id => id !== userId);
+            assigned = assigned.filter(id => id !== userId);
         }
+        tenants[tIdx].queues[qIdx].assignedAgentIds = assigned;
         await this.setStorage('tenants', tenants);
         return true;
     }
@@ -210,10 +211,6 @@ export class GlobalDurableObject extends DurableObject {
         }
         const conversationsKey = `tenant:${targetTenant.id}:conversations`;
         const existingConvs = (await this.getStorage<Conversation[]>(conversationsKey)) || [];
-        const activeInQueue = existingConvs.filter(c => c.queueId === finalQueue?.id && c.status !== 'ended').length;
-        if (finalQueue.capacityMax && activeInQueue >= finalQueue.capacityMax) {
-            return null;
-        }
         const newConv: Conversation = {
             id: nanoid(),
             tenantId: targetTenant.id,
