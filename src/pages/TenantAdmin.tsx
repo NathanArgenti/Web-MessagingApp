@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { useAuthStore } from '@/lib/store';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -16,6 +17,7 @@ import { toast } from 'sonner';
 import { Save, Plus, Trash2, Globe, Shield, Monitor, ListFilter, Users as UsersIcon, UserPlus, Activity } from 'lucide-react';
 import { Queue, TenantSite, ApiResponse, User } from '@shared/types';
 import { nanoid } from 'nanoid';
+import { cn } from "@/lib/utils";
 export function TenantAdmin() {
   const queryClient = useQueryClient();
   const tenant = useAuthStore(s => s.tenant);
