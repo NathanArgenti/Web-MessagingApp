@@ -12,6 +12,7 @@ import { Plus, Globe, Shield, Activity, Users as UsersIcon, Trash2, UserPlus, Da
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { cn } from "@/lib/utils";
 import { toast } from 'sonner';
 import { useAuthStore } from '@/lib/store';
 export function SuperAdmin() {

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics } from '@shared/types';
+import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics, SystemMetrics } from '@shared/types';
 import { nanoid } from 'nanoid';
 export function userRoutes(rawApp: any) {
     const app = rawApp as Hono;
@@ -8,22 +8,19 @@ export function userRoutes(rawApp: any) {
         const env = c.env as any;
         return env.GlobalDurableObject.get(env.GlobalDurableObject.idFromName("global"));
     };
-    // RBAC Middleware: Ensure tenant isolation for admin routes
     const enforceTenantContext = async (c: any, next: any) => {
         const token = getAuthToken(c);
         const stub = getStub(c);
         const me = await stub.getMe(token);
         const targetTenantId = c.req.header('X-Tenant-ID');
         if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
-        // Superadmins can access any tenant context
         if (me.user.role === 'superadmin') return await next();
-        // Others must match their assigned tenantId
         if (targetTenantId && me.user.tenantId !== targetTenantId) {
             return c.json({ success: false, error: 'Access denied: Tenant isolation violation' }, 403);
         }
         return await next();
     };
-    // PUBLIC ENDPOINTS (No Auth Required)
+    // PUBLIC ENDPOINTS
     app.get('/api/public/config/:siteKey', async (c) => {
         const siteKey = c.req.param('siteKey');
         const stub = getStub(c);
@@ -31,7 +28,31 @@ export function userRoutes(rawApp: any) {
         if (!data) return c.json({ success: false, error: 'Site not found' }, 404);
         return c.json({ success: true, data });
     });
-    // AGENT/ADMIN SECURE ENDPOINTS
+    app.get('/api/public/queue/:id/status', async (c) => {
+        const id = c.req.param('id');
+        const stub = getStub(c);
+        const data = await stub.getQueueStatus(id);
+        return c.json({ success: true, data });
+    });
+    app.post('/api/public/conversations', async (c) => {
+        const { siteKey, queueId, name } = await c.req.json();
+        const stub = getStub(c);
+        const data = await stub.createConversation(siteKey, queueId, name);
+        if (!data) return c.json({ success: false, error: 'Could not start conversation' }, 400);
+        return c.json({ success: true, data });
+    });
+    app.post('/api/public/offline', async (c) => {
+        const body = await c.req.json();
+        const stub = getStub(c);
+        const data = await stub.saveOfflineRequest({
+            id: nanoid(),
+            ...body,
+            status: 'pending',
+            createdAt: Date.now()
+        });
+        return c.json({ success: true, data });
+    });
+    // AUTH & AGENT ENDPOINTS
     app.get('/api/auth/me', async (c) => {
         const token = getAuthToken(c);
         const stub = getStub(c);
@@ -47,7 +68,46 @@ export function userRoutes(rawApp: any) {
         await stub.updatePresence(me.user.id, status);
         return c.json({ success: true });
     });
-    // TENANT ADMIN SCOPED ENDPOINTS
+    app.post('/api/conversations/:id/claim', async (c) => {
+        const id = c.req.param('id');
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        const data = await stub.claimConversation(me.user.id, id);
+        return c.json({ success: !!data, data });
+    });
+    app.post('/api/conversations/:id/end', async (c) => {
+        const id = c.req.param('id');
+        const stub = getStub(c);
+        const data = await stub.endConversation(id);
+        return c.json({ success: !!data, data });
+    });
+    app.get('/api/agent/metrics', enforceTenantContext, async (c) => {
+        const tenantId = c.req.header('X-Tenant-ID');
+        const stub = getStub(c);
+        const data = await stub.getAgentMetrics(tenantId);
+        return c.json({ success: true, data });
+    });
+    app.post('/api/agent/queues/join', async (c) => {
+        const { queueId } = await c.req.json();
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        await stub.joinQueue(me.user.id, queueId);
+        return c.json({ success: true });
+    });
+    app.post('/api/agent/queues/leave', async (c) => {
+        const { queueId } = await c.req.json();
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        await stub.leaveQueue(me.user.id, queueId);
+        return c.json({ success: true });
+    });
+    // ADMIN & INTERNAL
     app.get('/api/admin/agents', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
         const stub = getStub(c);
@@ -55,27 +115,34 @@ export function userRoutes(rawApp: any) {
         const admins = await stub.getUsers(tenantId, 'tenant_admin');
         return c.json({ success: true, data: [...data, ...admins] });
     });
-    app.post('/api/admin/agents/invite', enforceTenantContext, async (c) => {
+    app.get('/api/internal/offline', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
-        const { email, name } = await c.req.json();
         const stub = getStub(c);
-        const data = await stub.upsertUser({ email, name, role: 'agent', tenantId });
+        const data = await stub.getOfflineRequests(tenantId);
         return c.json({ success: true, data });
     });
-    app.put('/api/admin/settings', enforceTenantContext, async (c) => {
+    app.post('/api/internal/offline/:id/dispatch', enforceTenantContext, async (c) => {
+        const id = c.req.param('id');
         const tenantId = c.req.header('X-Tenant-ID');
-        const body = await c.req.json();
         const stub = getStub(c);
-        const data = await stub.updateTenantSettings(tenantId, body);
-        return c.json({ success: !!data, data });
+        const ok = await stub.dispatchOfflineRequest(tenantId, id);
+        return c.json({ success: ok });
     });
-    // SUPERADMIN PLATFORM OVERSEEING
     app.get('/api/superadmin/tenants', async (c) => {
         const token = getAuthToken(c);
         const stub = getStub(c);
         const me = await stub.getMe(token);
         if (me?.user.role !== 'superadmin') return c.json({ success: false, error: 'Forbidden' }, 403);
         const data = await stub.getAllTenants();
+        return c.json({ success: true, data });
+    });
+    app.post('/api/superadmin/tenants', async (c) => {
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (me?.user.role !== 'superadmin') return c.json({ success: false, error: 'Forbidden' }, 403);
+        const { name } = await c.req.json();
+        const data = await stub.createTenant(name);
         return c.json({ success: true, data });
     });
     app.get('/api/superadmin/users', async (c) => {
@@ -100,14 +167,12 @@ export function userRoutes(rawApp: any) {
         const data = await stub.getGlobalMetrics();
         return c.json({ success: true, data });
     });
-    // CONVERSATIONS
     app.get('/api/conversations', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
         const stub = getStub(c);
         const data = await stub.getConversations(tenantId);
         return c.json({ success: true, data });
     });
-    // SEED & OPS
     app.post('/api/seed', async (c) => {
         const stub = getStub(c);
         await stub.seedDatabase();
@@ -119,7 +184,6 @@ export function userRoutes(rawApp: any) {
         const data = await stub.login(email);
         return c.json({ success: !!data, data });
     });
-    // MESSAGES (Shared with strict isolation check via session verification in DO)
     app.get('/api/conversations/:id/messages', async (c) => {
         const id = c.req.param('id');
         const stub = getStub(c);

@@ -26,9 +26,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   activeConversationId: null,
   setAuth: (user, token, tenant, availableTenants = []) => {
     localStorage.setItem('mercury_token', token);
-    // Filter available tenants for non-superadmins if not already filtered by server
-    const filteredTenants = user.role === 'superadmin' 
-      ? availableTenants 
+    // Server typically filters this, but ensure consistency for local state
+    const filteredTenants = user.role === 'superadmin'
+      ? availableTenants
       : availableTenants.filter(t => t.id === user.tenantId);
     const initialTenantId = user.tenantId || (filteredTenants[0]?.id) || null;
     if (initialTenantId) {
@@ -37,10 +37,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({
       user,
       token,
-      tenant,
+      tenant: tenant || null,
       availableTenants: filteredTenants,
       selectedTenantId: initialTenantId,
-      isAuthenticated: true
+      isAuthenticated: true,
+      presenceStatus: user.presenceStatus || 'online'
     });
   },
   setSelectedTenantId: (selectedTenantId) => {
@@ -49,7 +50,6 @@ export const useAuthStore = create<AuthState>((set) => ({
     } else {
       localStorage.removeItem('mercury_tenant_id');
     }
-    // Prevent state bleeding by clearing active conversation on tenant switch
     set({ selectedTenantId, activeConversationId: null });
   },
   clearAuth: () => {
@@ -62,7 +62,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       availableTenants: [],
       selectedTenantId: null,
       isAuthenticated: false,
-      activeConversationId: null
+      activeConversationId: null,
+      presenceStatus: 'offline'
     });
   },
   setPresenceStatus: (presenceStatus) => set({ presenceStatus }),
