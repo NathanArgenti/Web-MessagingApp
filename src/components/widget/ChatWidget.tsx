@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageCircle, X, Send, Loader2, RotateCcw } from 'lucide-react';
+import { MessageCircle, X, Send, Loader2, RotateCcw, Power } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,13 +9,17 @@ import { nanoid } from 'nanoid';
 interface ChatWidgetProps {
   siteKey: string;
 }
-export function ChatWidget({ siteKey }: ChatWidgetProps) {
+export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [session, setSession] = useState<{ convId: string, visitorId: string } | null>(() => {
     const saved = localStorage.getItem(`mercury_session_${siteKey}`);
     return saved ? JSON.parse(saved) : null;
   });
+  const sessionRef = useRef(session);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isEnded, setIsEnded] = useState(false);
   const [input, setInput] = useState('');
@@ -29,9 +33,9 @@ export function ChatWidget({ siteKey }: ChatWidgetProps) {
       });
   }, [siteKey]);
   useEffect(() => {
-    if (!session?.convId || !isOpen || isEnded) return;
+    if (!sessionRef.current?.convId || !isOpen || isEnded) return;
     const interval = setInterval(() => {
-      fetch(`/api/conversations/${session.convId}/messages`)
+      fetch(`/api/conversations/${sessionRef.current.convId}/messages`)
         .then(res => res.json())
         .then((json: ApiResponse<Message[]>) => {
           if (json.success) setMessages(json.data ?? []);
@@ -40,12 +44,12 @@ export function ChatWidget({ siteKey }: ChatWidgetProps) {
       fetch(`/api/conversations`) // Mocking general check for session status
         .then(res => res.json())
         .then((json: ApiResponse<Conversation[]>) => {
-          const current = (json.data ?? []).find(c => c.id === session.convId);
+          const current = (json.data ?? []).find(c => c.id === sessionRef.current.convId);
           if (current?.status === 'ended') setIsEnded(true);
         });
     }, 4000);
     return () => clearInterval(interval);
-  }, [session?.convId, isOpen, isEnded]);
+  }, [isOpen]); // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);

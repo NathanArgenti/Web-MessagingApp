@@ -1,9 +1,9 @@
-import React from 'react'
+import React, { lazy, Suspense } from 'react'
 import { MessageCircle, Globe, Zap, Database } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Toaster, toast } from 'sonner'
 import { Link } from 'react-router-dom'
-import { ChatWidget } from '@/components/widget/ChatWidget'
+const LazyChatWidget = lazy(() => import('@/components/widget/ChatWidget'));
 export function HomePage() {
   const seedDatabase = async () => {
     try {
@@ -89,7 +89,9 @@ export function HomePage() {
         </div>
       </footer>
       {/* Real Demo Widget */}
-      <ChatWidget siteKey="acme-123" />
+      <Suspense fallback={null}>
+        <LazyChatWidget siteKey="acme-123" />
+      </Suspense>
       <Toaster richColors />
     </div>
   )
