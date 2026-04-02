@@ -1,16 +1,16 @@
 import React from "react";
-import { 
-  LayoutDashboard, 
-  Settings, 
-  Users, 
-  MessageSquare, 
-  ShieldCheck, 
-  LogOut 
+import {
+  LayoutDashboard,
+  Settings,
+  Users,
+  MessageSquare,
+  ShieldCheck,
+  LogOut
 } from "lucide-react";
-import { 
-  SidebarProvider, 
-  SidebarInset, 
-  SidebarTrigger, 
+import {
+  SidebarProvider,
+  SidebarInset,
+  SidebarTrigger,
   Sidebar,
   SidebarContent,
   SidebarHeader,
@@ -22,8 +22,9 @@ import {
 import { useAuthStore } from "@/lib/store";
 import { useNavigate, Link } from "react-router-dom";
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore(s => s.user);
-  const tenant = useAuthStore(s => s.tenant);
+  const userRole = useAuthStore(s => s.user?.role);
+  const userName = useAuthStore(s => s.user?.name);
+  const tenantName = useAuthStore(s => s.tenant?.name);
   const clearAuth = useAuthStore(s => s.clearAuth);
   const navigate = useNavigate();
   const handleLogout = () => {
@@ -40,19 +41,19 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
       <Sidebar>
         <SidebarHeader className="p-4 flex flex-row items-center gap-3">
           <div className="w-8 h-8 bg-cyan-600 rounded flex items-center justify-center text-white font-bold">M</div>
-          <div className="flex flex-col">
+          <div className="flex flex-col overflow-hidden">
             <span className="text-sm font-bold truncate max-w-[150px]">
-              {tenant?.name || 'Mercury'}
+              {tenantName || 'Mercury'}
             </span>
-            <span className="text-xs text-muted-foreground capitalize">{user?.role.replace('_', ' ')}</span>
+            <span className="text-xs text-muted-foreground capitalize">{userRole?.replace('_', ' ')}</span>
           </div>
         </SidebarHeader>
         <SidebarContent>
           <SidebarMenu>
-            {navItems.filter(item => user && item.roles.includes(user.role)).map((item) => (
+            {navItems.filter(item => userRole && item.roles.includes(userRole)).map((item) => (
               <SidebarMenuItem key={item.path}>
                 <SidebarMenuButton asChild>
-                  <Link to={item.path}>
+                  <Link to={item.path} className="hover:bg-cyan-50 hover:text-cyan-600 transition-colors">
                     <item.icon className="w-4 h-4" />
                     <span>{item.label}</span>
                   </Link>
@@ -64,7 +65,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         <SidebarFooter className="p-4 border-t">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton onClick={handleLogout} className="text-destructive hover:text-destructive">
+              <SidebarMenuButton onClick={handleLogout} className="text-destructive hover:bg-destructive/10 hover:text-destructive">
                 <LogOut className="w-4 h-4" />
                 <span>Logout</span>
               </SidebarMenuButton>
@@ -77,11 +78,13 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
           <SidebarTrigger />
           <div className="flex-1" />
           <div className="flex items-center gap-3">
-            <span className="text-sm font-medium">{user?.name}</span>
-            <div className="w-8 h-8 rounded-full bg-slate-200 border border-slate-300" />
+            <span className="text-sm font-medium">{userName}</span>
+            <div className="w-8 h-8 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center">
+              <Users className="w-4 h-4 text-slate-500" />
+            </div>
           </div>
         </header>
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto bg-slate-50/30">
           {children}
         </main>
       </SidebarInset>

@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import type { User, Tenant, Queue, Conversation, Message, PresenceStatus } from '@shared/types';
+import type { User, Tenant, Queue, Conversation, Message, PresenceStatus, PublicConfig } from '@shared/types';
+import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
         return await this.ctx.storage.get<T>(key);
@@ -8,18 +9,24 @@ export class GlobalDurableObject extends DurableObject {
         await this.ctx.storage.put(key, value);
     }
     async seedDatabase(): Promise<boolean> {
+        const queues: Queue[] = [
+            { id: 'q1', tenantId: 't1', name: 'General Support' },
+            { id: 'q2', tenantId: 't1', name: 'Sales' }
+        ];
         const tenants: Tenant[] = [
             {
                 id: 't1',
                 name: 'Acme Corp',
                 siteKey: 'acme-123',
-                branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome to Acme Support!' }
+                branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome to Acme Support!' },
+                queues: [queues[0], queues[1]]
             },
             {
                 id: 't2',
                 name: 'Globex',
                 siteKey: 'globex-456',
-                branding: { primaryColor: '#F38020', welcomeMessage: 'How can Globex help today?' }
+                branding: { primaryColor: '#F38020', welcomeMessage: 'How can Globex help today?' },
+                queues: []
             }
         ];
         const users: User[] = [
@@ -27,11 +34,6 @@ export class GlobalDurableObject extends DurableObject {
             { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online' },
             { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline' }
         ];
-        const queues: Queue[] = [
-            { id: 'q1', tenantId: 't1', name: 'General Support' },
-            { id: 'q2', tenantId: 't1', name: 'Sales' }
-        ];
-        // Initial mock conversations
         const conversations: Conversation[] = [
           {
             id: 'c1',
@@ -48,6 +50,46 @@ export class GlobalDurableObject extends DurableObject {
         await this.setStorage('users', users);
         await this.setStorage('queues', queues);
         await this.setStorage('tenant:t1:conversations', conversations);
+        return true;
+    }
+    async getPublicConfig(siteKey: string): Promise<PublicConfig | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tenant = tenants.find(t => t.siteKey === siteKey);
+        if (!tenant) return null;
+        return {
+            tenantId: tenant.id,
+            name: tenant.name,
+            branding: tenant.branding,
+            queues: tenant.queues.map(q => ({ id: q.id, name: q.name }))
+        };
+    }
+    async createVisitorConversation(siteKey: string, queueId: string, contact: { name: string, email?: string }): Promise<Conversation | null> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const tenant = tenants.find(t => t.siteKey === siteKey);
+        if (!tenant) return null;
+        const newConv: Conversation = {
+            id: nanoid(),
+            tenantId: tenant.id,
+            queueId,
+            status: 'unassigned',
+            contactName: contact.name,
+            contactEmail: contact.email,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        const key = `tenant:${tenant.id}:conversations`;
+        const convs = (await this.getStorage<Conversation[]>(key)) || [];
+        convs.push(newConv);
+        await this.setStorage(key, convs);
+        return newConv;
+    }
+    async updateTenantSettings(tenantId: string, branding: Tenant['branding'], queues: Queue[]): Promise<boolean> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const index = tenants.findIndex(t => t.id === tenantId);
+        if (index === -1) return false;
+        tenants[index].branding = branding;
+        tenants[index].queues = queues;
+        await this.setStorage('tenants', tenants);
         return true;
     }
     async login(email: string): Promise<{ user: User; token: string; tenant?: Tenant } | null> {

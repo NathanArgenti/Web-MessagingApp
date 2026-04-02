@@ -1,8 +1,51 @@
 import { Hono } from "hono";
 import { Env } from './core-utils';
-import type { ApiResponse, AuthPayload, Conversation, Message, PresenceStatus } from '@shared/types';
+import type { ApiResponse, AuthPayload, Conversation, Message, PresenceStatus, PublicConfig } from '@shared/types';
 import { nanoid } from 'nanoid';
 export function userRoutes(app: Hono<{ Bindings: Env }>) {
+    // PUBLIC ROUTES
+    app.get('/api/public/config/:siteKey', async (c) => {
+        const siteKey = c.req.param('siteKey');
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.getPublicConfig(siteKey);
+        if (!data) return c.json({ success: false, error: 'Site not found' }, 404);
+        return c.json({ success: true, data } as ApiResponse<PublicConfig>);
+    });
+    app.post('/api/public/conversations', async (c) => {
+        const { siteKey, queueId, name, email } = await c.req.json();
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const data = await stub.createVisitorConversation(siteKey, queueId, { name, email });
+        if (!data) return c.json({ success: false, error: 'Failed to start chat' }, 400);
+        return c.json({ success: true, data } as ApiResponse<Conversation>);
+    });
+    app.post('/api/public/messages', async (c) => {
+        const { conversationId, content, visitorId } = await c.req.json();
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const message: Message = {
+            id: nanoid(),
+            conversationId,
+            senderId: visitorId || 'anonymous',
+            senderType: 'visitor',
+            content,
+            timestamp: Date.now()
+        };
+        const data = await stub.sendMessage(message);
+        return c.json({ success: true, data } as ApiResponse<Message>);
+    });
+    // ADMIN ROUTES
+    app.put('/api/admin/settings', async (c) => {
+        const authHeader = c.req.header('Authorization');
+        const token = authHeader?.split(' ')[1] || '';
+        const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
+        const me = await stub.getMe(token);
+        if (!me || me.user.role !== 'tenant_admin' || !me.user.tenantId) {
+            return c.json({ success: false, error: 'Unauthorized' }, 401);
+        }
+        const { branding, queues } = await c.req.json();
+        const success = await stub.updateTenantSettings(me.user.tenantId, branding, queues);
+        return c.json({ success });
+    });
+    // EXISTING ROUTES
     app.post('/api/seed', async (c) => {
         const stub = c.env.GlobalDurableObject.get(c.env.GlobalDurableObject.idFromName("global"));
         await stub.seedDatabase();

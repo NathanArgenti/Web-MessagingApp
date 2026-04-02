@@ -13,12 +13,13 @@ export interface User {
 export interface Tenant {
   id: string;
   name: string;
-  siteKey: string; 
+  siteKey: string;
   branding: {
     primaryColor: string;
     logoUrl?: string;
     welcomeMessage: string;
   };
+  queues: Queue[];
 }
 export interface Queue {
   id: string;
@@ -32,7 +33,7 @@ export interface Conversation {
   tenantId: string;
   queueId: string;
   status: ConversationStatus;
-  ownerId?: string; 
+  ownerId?: string;
   contactName: string;
   contactEmail?: string;
   createdAt: number;
@@ -41,7 +42,7 @@ export interface Conversation {
 export interface Message {
   id: string;
   conversationId: string;
-  senderId: string; 
+  senderId: string;
   senderType: 'agent' | 'visitor' | 'system';
   content: string;
   timestamp: number;
@@ -54,6 +55,16 @@ export interface AuthPayload {
   user: User;
   token: string;
   tenant?: Tenant;
+}
+export interface PublicConfig {
+  tenantId: string;
+  name: string;
+  branding: {
+    primaryColor: string;
+    logoUrl?: string;
+    welcomeMessage: string;
+  };
+  queues: { id: string, name: string }[];
 }
 export interface ApiResponse<T = unknown> {
   success: boolean;

@@ -17,7 +17,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 export function AgentConsole() {
   const token = useAuthStore(s => s.token);
-  const user = useAuthStore(s => s.user);
+  const userId = useAuthStore(s => s.user?.id);
   const activeId = useAuthStore(s => s.activeConversationId);
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
   const presence = useAuthStore(s => s.presenceStatus);
@@ -27,6 +27,7 @@ export function AgentConsole() {
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations'],
     queryFn: async () => {
+      if (!token) return [];
       const res = await fetch('/api/conversations', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -34,6 +35,7 @@ export function AgentConsole() {
       return json.data || [];
     },
     refetchInterval: 5000,
+    enabled: !!token,
   });
   const { messages, sendMessage, claimConversation } = useChat(activeId);
   useEffect(() => {
@@ -52,14 +54,14 @@ export function AgentConsole() {
     setPresence(status);
     await fetch('/api/presence', {
       method: 'PUT',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({ status })
     });
   };
-  const myChats = conversations.filter(c => c.ownerId === user?.id && c.status === 'owned');
+  const myChats = conversations.filter(c => c.ownerId === userId && c.status === 'owned');
   const unassigned = conversations.filter(c => c.status === 'unassigned');
   const activeConv = conversations.find(c => c.id === activeId);
   return (
@@ -76,16 +78,15 @@ export function AgentConsole() {
             <Label htmlFor="presence" className="text-xs font-semibold text-slate-600">
               {presence === 'online' ? 'Available' : 'Away'}
             </Label>
-            <Switch 
-              id="presence" 
-              checked={presence === 'online'} 
+            <Switch
+              id="presence"
+              checked={presence === 'online'}
               onCheckedChange={handlePresenceToggle}
               className="data-[state=checked]:bg-cyan-500"
             />
           </div>
         </div>
         <div className="flex-1 grid grid-cols-12 overflow-hidden">
-          {/* Column 1: Conversations List */}
           <div className="col-span-3 border-r bg-slate-50/50 flex flex-col">
             <ScrollArea className="flex-1">
               <div className="p-4 space-y-6">
@@ -95,8 +96,8 @@ export function AgentConsole() {
                   </h3>
                   <div className="space-y-2">
                     {myChats.map(c => (
-                      <Card 
-                        key={c.id} 
+                      <Card
+                        key={c.id}
                         onClick={() => setActiveId(c.id)}
                         className={cn(
                           "p-3 cursor-pointer transition-all hover:shadow-md border-transparent",
@@ -126,9 +127,9 @@ export function AgentConsole() {
                           <p className="text-sm font-medium text-slate-700">{c.contactName}</p>
                           <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100">Waiting</Badge>
                         </div>
-                        <Button 
-                          size="sm" 
-                          variant="outline" 
+                        <Button
+                          size="sm"
+                          variant="outline"
                           className="w-full text-xs h-7 border-cyan-200 text-cyan-700 hover:bg-cyan-50"
                           onClick={() => claimConversation(c.id)}
                         >
@@ -142,7 +143,6 @@ export function AgentConsole() {
               </div>
             </ScrollArea>
           </div>
-          {/* Column 2: Chat Area */}
           <div className="col-span-6 flex flex-col bg-white">
             {!activeId ? (
               <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4">
@@ -168,8 +168,8 @@ export function AgentConsole() {
                         >
                           <div className={cn(
                             "px-4 py-2.5 rounded-2xl text-sm shadow-sm",
-                            m.senderType === 'agent' 
-                              ? "bg-cyan-600 text-white rounded-br-none" 
+                            m.senderType === 'agent'
+                              ? "bg-cyan-600 text-white rounded-br-none"
                               : "bg-slate-100 text-slate-800 rounded-bl-none border border-slate-200"
                           )}>
                             {m.content}
@@ -185,15 +185,15 @@ export function AgentConsole() {
                 </ScrollArea>
                 <div className="p-4 border-t bg-slate-50/80 backdrop-blur-sm">
                   <form onSubmit={handleSend} className="flex gap-2 bg-white p-1 rounded-lg border shadow-sm focus-within:ring-2 focus-within:ring-cyan-500/20 transition-all">
-                    <Input 
-                      placeholder="Type your response..." 
+                    <Input
+                      placeholder="Type your response..."
                       className="border-0 focus-visible:ring-0 shadow-none h-10"
                       value={msgInput}
                       onChange={(e) => setMsgInput(e.target.value)}
                     />
-                    <Button 
-                      type="submit" 
-                      size="icon" 
+                    <Button
+                      type="submit"
+                      size="icon"
                       className="bg-cyan-600 hover:bg-cyan-700 h-10 w-10 shrink-0"
                       disabled={!msgInput.trim()}
                     >
@@ -204,7 +204,6 @@ export function AgentConsole() {
               </>
             )}
           </div>
-          {/* Column 3: Contact Details */}
           <div className="col-span-3 border-l bg-slate-50/50">
              <ScrollArea className="h-full p-6">
                 <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Contact Profile</h3>
