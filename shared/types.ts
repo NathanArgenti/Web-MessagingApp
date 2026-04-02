@@ -1,4 +1,5 @@
 export type UserRole = 'superadmin' | 'tenant_admin' | 'agent';
+export type PresenceStatus = 'online' | 'away' | 'offline';
 export interface User {
   id: string;
   email: string;
@@ -7,11 +8,12 @@ export interface User {
   tenantId?: string;
   avatarUrl?: string;
   isOnline: boolean;
+  presenceStatus?: PresenceStatus;
 }
 export interface Tenant {
   id: string;
   name: string;
-  siteKey: string; // Unique key for widget binding
+  siteKey: string; 
   branding: {
     primaryColor: string;
     logoUrl?: string;
@@ -30,7 +32,7 @@ export interface Conversation {
   tenantId: string;
   queueId: string;
   status: ConversationStatus;
-  ownerId?: string; // User ID of the agent
+  ownerId?: string; 
   contactName: string;
   contactEmail?: string;
   createdAt: number;
@@ -39,10 +41,14 @@ export interface Conversation {
 export interface Message {
   id: string;
   conversationId: string;
-  senderId: string; // Can be user ID or 'system' or 'visitor'
+  senderId: string; 
   senderType: 'agent' | 'visitor' | 'system';
   content: string;
   timestamp: number;
+  metadata?: Record<string, any>;
+}
+export interface ConversationWithMessages extends Conversation {
+  messages: Message[];
 }
 export interface AuthPayload {
   user: User;

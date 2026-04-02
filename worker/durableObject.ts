@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { User, Tenant, Queue, DemoItem } from '@shared/types';
+import type { User, Tenant, Queue, Conversation, Message, PresenceStatus } from '@shared/types';
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
         return await this.ctx.storage.get<T>(key);
@@ -23,17 +23,31 @@ export class GlobalDurableObject extends DurableObject {
             }
         ];
         const users: User[] = [
-            { id: 'u1', email: 'admin@mercury.com', name: 'Global Admin', role: 'superadmin', isOnline: true },
-            { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true },
-            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false }
+            { id: 'u1', email: 'admin@mercury.com', name: 'Global Admin', role: 'superadmin', isOnline: true, presenceStatus: 'online' },
+            { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online' },
+            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Agent 1', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline' }
         ];
         const queues: Queue[] = [
             { id: 'q1', tenantId: 't1', name: 'General Support' },
             { id: 'q2', tenantId: 't1', name: 'Sales' }
         ];
+        // Initial mock conversations
+        const conversations: Conversation[] = [
+          {
+            id: 'c1',
+            tenantId: 't1',
+            queueId: 'q1',
+            status: 'unassigned',
+            contactName: 'John Doe',
+            contactEmail: 'john@example.com',
+            createdAt: Date.now() - 100000,
+            updatedAt: Date.now() - 100000
+          }
+        ];
         await this.setStorage('tenants', tenants);
         await this.setStorage('users', users);
         await this.setStorage('queues', queues);
+        await this.setStorage('tenant:t1:conversations', conversations);
         return true;
     }
     async login(email: string): Promise<{ user: User; token: string; tenant?: Tenant } | null> {
@@ -49,7 +63,9 @@ export class GlobalDurableObject extends DurableObject {
         };
     }
     async getMe(token: string): Promise<{ user: User; tenant?: Tenant } | null> {
-        const userId = token.split('-')[2];
+        const parts = token.split('-');
+        if (parts.length < 3) return null;
+        const userId = parts[2];
         const users = (await this.getStorage<User[]>('users')) || [];
         const user = users.find(u => u.id === userId);
         if (!user) return null;
@@ -57,17 +73,32 @@ export class GlobalDurableObject extends DurableObject {
         const tenant = tenants.find(t => t.id === user.tenantId);
         return { user, tenant };
     }
-    // Legacy Demo Methods
-    async getCounterValue(): Promise<number> {
-      return (await this.ctx.storage.get("counter_value")) || 0;
+    async updatePresence(userId: string, status: PresenceStatus): Promise<void> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const updatedUsers = users.map(u => u.id === userId ? { ...u, presenceStatus: status, isOnline: status !== 'offline' } : u);
+        await this.setStorage('users', updatedUsers);
     }
-    async increment(amount = 1): Promise<number> {
-      let value: number = (await this.ctx.storage.get("counter_value")) || 0;
-      value += amount;
-      await this.ctx.storage.put("counter_value", value);
-      return value;
+    async getConversations(tenantId: string): Promise<Conversation[]> {
+        return (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
     }
-    async getDemoItems(): Promise<DemoItem[]> {
-      return (await this.ctx.storage.get("demo_items")) || [];
+    async claimConversation(tenantId: string, conversationId: string, agentId: string): Promise<Conversation | null> {
+        const key = `tenant:${tenantId}:conversations`;
+        const convs = (await this.getStorage<Conversation[]>(key)) || [];
+        const index = convs.findIndex(c => c.id === conversationId);
+        if (index === -1) return null;
+        const updated = { ...convs[index], status: 'owned' as const, ownerId: agentId, updatedAt: Date.now() };
+        convs[index] = updated;
+        await this.setStorage(key, convs);
+        return updated;
+    }
+    async getMessages(conversationId: string): Promise<Message[]> {
+        return (await this.getStorage<Message[]>(`messages:${conversationId}`)) || [];
+    }
+    async sendMessage(msg: Message): Promise<Message> {
+        const key = `messages:${msg.conversationId}`;
+        const msgs = (await this.getStorage<Message[]>(key)) || [];
+        msgs.push(msg);
+        await this.setStorage(key, msgs);
+        return msg;
     }
 }

@@ -1,13 +1,11 @@
 import '@/lib/errorReporter';
 import { enableMapSet } from "immer";
 enableMapSet();
-import React, { StrictMode, useEffect } from 'react'
+import React, { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   createBrowserRouter,
   RouterProvider,
-  Navigate,
-  useLocation
 } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -17,20 +15,8 @@ import { HomePage } from '@/pages/HomePage'
 import { LoginPage } from '@/pages/LoginPage'
 import { AgentConsole } from '@/pages/AgentConsole'
 import { TenantAdmin } from '@/pages/TenantAdmin'
-import { useAuthStore } from '@/lib/store'
+import { AuthGuard } from '@/components/auth/AuthGuard'
 const queryClient = new QueryClient();
-function AuthGuard({ children, roles }: { children: React.ReactNode, roles?: string[] }) {
-  const isAuthenticated = useAuthStore(s => s.isAuthenticated);
-  const user = useAuthStore(s => s.user);
-  const location = useLocation();
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-  if (roles && user && !roles.includes(user.role)) {
-    return <Navigate to="/" replace />;
-  }
-  return <>{children}</>;
-}
 const router = createBrowserRouter([
   {
     path: "/",
