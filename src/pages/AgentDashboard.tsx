@@ -12,7 +12,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 import { useChat } from '@/hooks/use-chat';
 import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics } from '@shared/types';
-import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck } from 'lucide-react';
+import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -61,12 +61,35 @@ export function AgentDashboard() {
         headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
       });
       const json = await res.json() as ApiResponse<SystemMetrics>;
-      return json.data!;
+      return json.data ?? { avgResponseTime: 0, resolutionRate: 0, activeAgents: 0, totalConvs: 0, hourlyMessageVolume: [] };
     },
     refetchInterval: 30000,
     enabled: !!token && !!selectedTenantId,
   });
   const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
+
+  const presenceMutation = useMutation({
+    mutationFn: async (status: PresenceStatus) => {
+      const res = await fetch('/api/presence', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status })
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err?.error || 'Update failed');
+      }
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast.success('Presence updated');
+      queryClient.invalidateQueries();
+    },
+    onError: (error: any) => toast.error(error.message || 'Failed')
+  });
   const membershipMutation = useMutation({
     mutationFn: async ({ queueId, action }: { queueId: string, action: 'join' | 'leave' }) => {
       const res = await fetch(`/api/agent/queues/${action}`, {
@@ -83,6 +106,28 @@ export function AgentDashboard() {
       toast.success("Queue membership updated");
       queryClient.invalidateQueries();
     }
+  });
+
+  const dispatchMutation = useMutation({
+    mutationFn: async (requestId: string) => {
+      const res = await fetch(`/api/internal/offline/${requestId}/dispatch`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': selectedTenantId || ''
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err?.error || 'Dispatch failed');
+      }
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast.success('Request dispatched');
+      queryClient.invalidateQueries({ queryKey: ['offline', selectedTenantId] });
+    },
+    onError: (error: any) => toast.error(error.message || 'Dispatch failed')
   });
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -115,6 +160,22 @@ export function AgentDashboard() {
             <TabsContent value="live" className="mt-0">
               <div className="h-[calc(100vh-18rem)] grid grid-cols-12 gap-6">
                 <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
+                  <Card className="shadow-sm border-slate-200 flex flex-col h-fit">
+                    <CardHeader className="p-4 border-b bg-slate-50/50">
+                      <CardTitle className="text-xs font-bold uppercase tracking-wider text-slate-500">Agent Presence</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-6 flex items-center justify-between gap-4">
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold capitalize">{user?.presenceStatus ?? 'offline'}</p>
+                        <p className="text-xs text-muted-foreground">{user?.isOnline ? 'Available for chats' : 'Offline'}</p>
+                      </div>
+                      <Switch 
+                        id="presence" 
+                        checked={user?.isOnline ?? false} 
+                        onCheckedChange={(checked) => presenceMutation.mutate((checked ? 'online' : 'offline') as PresenceStatus)} 
+                      />
+                    </CardContent>
+                  </Card>
                   <Card className="flex flex-col overflow-hidden shadow-sm border-slate-200">
                     <CardHeader className="p-4 border-b bg-slate-50/50">
                        <CardTitle className="text-xs font-bold uppercase tracking-wider text-slate-500">My Queues</CardTitle>
@@ -259,7 +320,15 @@ export function AgentDashboard() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
-                             <Button size="sm" variant="outline" className="h-8">Review</Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8"
+                              onClick={() => dispatchMutation.mutate(r.id)}
+                              disabled={r.status !== 'pending' || dispatchMutation.isPending}
+                            >
+                              {r.status === 'pending' ? 'Dispatch' : <Check className="w-4 h-4" />}
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -290,8 +359,8 @@ export function AgentDashboard() {
                <Card className="shadow-soft">
                   <CardHeader><CardTitle>Conversation Trends (24h)</CardTitle></CardHeader>
                   <CardContent>
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div className="h-[400px] w-full">
+                      <ResponsiveContainer width="100%" height={400}>
                         <BarChart data={metrics?.hourlyMessageVolume || []}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                           <XAxis dataKey="timestamp" axisLine={false} tickLine={false} fontSize={12} tick={{ fill: '#94a3b8' }} />

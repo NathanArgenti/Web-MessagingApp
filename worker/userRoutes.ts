@@ -45,7 +45,7 @@ export function userRoutes(rawApp: any) {
         const token = getAuthToken(c);
         const stub = getStub(c);
         const me = await stub.getMe(token);
-        if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        if (!me || !me.user) return c.json({ success: false, error: 'Unauthorized' }, 401);
         await stub.updatePresence(me.user.id, status);
         return c.json({ success: true });
     });
@@ -88,6 +88,17 @@ export function userRoutes(rawApp: any) {
         const stub = getStub(c);
         const data = await stub.getOfflineRequests(tenantId);
         return c.json({ success: true, data } as ApiResponse<OfflineRequest[]>);
+    });
+
+    app.post('/api/internal/offline/:id/dispatch', async (c) => {
+        const id = c.req.param('id');
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (!me || !me.user || !me.user.tenantId) return c.json({ success: false, error: 'Unauthorized' } as ApiResponse<null>, 401);
+        const tenantId = c.req.header('X-Tenant-ID') || me.user.tenantId;
+        const data = await stub.dispatchOfflineRequest(tenantId, id, me.user.id);
+        return c.json({ success: !!data, data } as ApiResponse<OfflineRequest>);
     });
     // SUPERADMIN
     app.get('/api/superadmin/users', async (c) => {
@@ -142,7 +153,7 @@ export function userRoutes(rawApp: any) {
         const token = getAuthToken(c);
         const stub = getStub(c);
         const me = await stub.getMe(token);
-        if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        if (!me || !me.user || !body?.content) return c.json({ success: false, error: 'Unauthorized or missing content' }, 401);
         const message: Message = {
             id: nanoid(),
             conversationId: id,

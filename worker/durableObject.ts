@@ -197,6 +197,17 @@ export class GlobalDurableObject extends DurableObject {
             finalQueue = availableQueues.find(q => q.id === targetSite?.defaultQueueId) || availableQueues[0];
         }
         if (!finalQueue) return null;
+        const status = await this.getQueueStatus(targetTenant.id, finalQueue.id);
+        if (!status?.available) {
+            await this.createOfflineRequest(targetTenant.id, {
+                queueId: finalQueue.id,
+                visitorName: contact.name,
+                visitorEmail: contact.email || '',
+                subject: 'Live Chat Request (Unavailable)',
+                message: `Live chat attempt by ${contact.name} (${contact.email || 'no email'}). No agents online or queue full.`
+            });
+            return null;
+        }
         const conversationsKey = `tenant:${targetTenant.id}:conversations`;
         const existingConvs = (await this.getStorage<Conversation[]>(conversationsKey)) || [];
         const activeInQueue = existingConvs.filter(c => c.queueId === finalQueue?.id && c.status !== 'ended').length;
@@ -248,7 +259,7 @@ export class GlobalDurableObject extends DurableObject {
             }
             event.processed = true;
         }
-        await this.setStorage('outbox', outbox.filter(e => !e.processed));
+        await this.setStorage('outbox', outbox);
     }
     async getSystemMetrics(tenantId: string): Promise<SystemMetrics> {
         const conversations = (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
@@ -281,8 +292,10 @@ export class GlobalDurableObject extends DurableObject {
         convs[index].updatedAt = Date.now();
         await this.setStorage(key, convs);
         const idxStore = await this.getStorage<Record<string, any>>('conversations_index') || {};
-        idxStore[conversationId].status = 'ended';
-        await this.setStorage('conversations_index', idxStore);
+        if (idxStore[conversationId]) {
+            idxStore[conversationId].status = 'ended';
+            await this.setStorage('conversations_index', idxStore);
+        }
         await this.emitEvent(tenantId, 'conversation.ended', convs[index]);
         return convs[index];
     }
@@ -321,11 +334,25 @@ export class GlobalDurableObject extends DurableObject {
         convs[index] = { ...convs[index], status: 'owned', ownerId: agentId, updatedAt: Date.now() };
         await this.setStorage(key, convs);
         const idxStore = await this.getStorage<Record<string, any>>('conversations_index') || {};
-        idxStore[conversationId].status = 'owned';
-        await this.setStorage('conversations_index', idxStore);
+        if (idxStore[conversationId]) {
+            idxStore[conversationId].status = 'owned';
+            await this.setStorage('conversations_index', idxStore);
+        }
         await this.emitEvent(tenantId, 'agent.assigned', convs[index]);
         return convs[index];
     }
+    async dispatchOfflineRequest(tenantId: string, offlineId: string, agentId: string): Promise<OfflineRequest | null> {
+        const key = `tenant:${tenantId}:offline_requests`;
+        const requests = (await this.getStorage<OfflineRequest[]>(key)) || [];
+        const idx = requests.findIndex(r => r.id === offlineId);
+        if (idx === -1) return null;
+        requests[idx].status = 'dispatched';
+        requests[idx].dispatchedBy = agentId;
+        requests[idx].dispatchTimestamp = Date.now();
+        await this.setStorage(key, requests);
+        return requests[idx];
+    }
+
     async getMessages(conversationId: string): Promise<Message[]> {
         return (await this.getStorage<Message[]>(`messages:${conversationId}`)) || [];
     }
