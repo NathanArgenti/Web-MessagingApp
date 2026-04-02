@@ -29,7 +29,7 @@ const router = createBrowserRouter([
   {
     path: "/agent",
     element: (
-      <AuthGuard roles={['agent', 'tenant_admin', 'superadmin']}>
+      <AuthGuard roles={['agent', 'tenant_admin']}>
         <AgentDashboard />
       </AuthGuard>
     ),
@@ -57,7 +57,7 @@ const router = createBrowserRouter([
     path: "/superadmin",
     element: (
       <AuthGuard roles={['superadmin']}>
-        <AgentDashboard />
+        <TenantAdmin />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,

@@ -49,11 +49,11 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   };
   const handleTenantSwitch = (id: string) => {
     setSelectedTenantId(id);
-    queryClient.invalidateQueries();
+    queryClient.invalidateQueries({ queryKey: ['conversations', 'queues', 'tenant'] });
   };
   const currentTenantName = availableTenants.find(t => t.id === selectedTenantId)?.name || tenantName || 'Mercury';
   const navItems = [
-    { label: 'Dashboard', icon: LayoutDashboard, path: '/agent', roles: ['agent', 'tenant_admin', 'superadmin'] },
+    { label: 'Dashboard', icon: LayoutDashboard, path: '/agent', roles: ['agent', 'tenant_admin'] },
     { label: 'Settings', icon: Settings, path: '/admin', roles: ['tenant_admin', 'superadmin'] },
     { label: 'WordPress', icon: Code2, path: '/admin/integration', roles: ['tenant_admin', 'superadmin'] },
   ];
