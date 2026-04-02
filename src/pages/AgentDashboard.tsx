@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -7,267 +7,298 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Switch } from '@/components/ui/switch';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 import { useChat } from '@/hooks/use-chat';
-import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics, Queue, SystemEvent } from '@shared/types';
-import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check, Loader2, Zap, History } from 'lucide-react';
+import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics } from '@shared/types';
+import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, Database, MailCheck, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { ChartContainer } from '@/components/ui/chart';
-import { toast } from 'sonner';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { motion, AnimatePresence } from 'framer-motion';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { toast } from 'sonner';
 export function AgentDashboard() {
   const token = useAuthStore(s => s.token);
-  const user = useAuthStore(s => s.user);
+  const userId = useAuthStore(s => s.user?.id);
+  const userName = useAuthStore(s => s.user?.name);
+  const userRole = useAuthStore(s => s.user?.role);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
   const activeId = useAuthStore(s => s.activeConversationId);
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
-  const userId = user?.id;
-  const presenceStatus = user?.presenceStatus;
-  const isOnline = user?.isOnline;
-  const effectiveTenantId = selectedTenantId || user?.tenantId || '';
   const [msgInput, setMsgInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  // Queries
   const { data: conversations = [] } = useQuery({
-    queryKey: ['conversations', effectiveTenantId],
+    queryKey: ['conversations', selectedTenantId],
     queryFn: async () => {
-      if (!token || !effectiveTenantId) return [];
       const res = await fetch('/api/conversations', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
       });
       const json = await res.json() as ApiResponse<Conversation[]>;
       return json.data ?? [];
     },
     refetchInterval: 5000,
-    enabled: !!token && !!effectiveTenantId,
+    enabled: !!token && !!selectedTenantId,
   });
-  const { data: eventLog = [] } = useQuery({
-    queryKey: ['admin', 'events', effectiveTenantId],
+  const { data: offlineRequests = [] } = useQuery({
+    queryKey: ['offline', selectedTenantId],
     queryFn: async () => {
-      const res = await fetch('/api/admin/events', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+      const res = await fetch('/api/internal/offline', {
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
       });
-      const json = await res.json() as ApiResponse<SystemEvent[]>;
+      const json = await res.json() as ApiResponse<OfflineRequest[]>;
       return json.data ?? [];
     },
     refetchInterval: 10000,
-    enabled: !!token && !!effectiveTenantId,
+    enabled: !!token && !!selectedTenantId,
   });
-
-  const { data: queuesResponse = {data: [] as Queue[]}, refetch: refetchQueues } = useQuery({
-    queryKey: ['queues', effectiveTenantId],
+  const { data: metrics } = useQuery({
+    queryKey: ['metrics', selectedTenantId],
     queryFn: async () => {
-      if (!token || !effectiveTenantId) throw new Error('Missing auth');
-      const res = await fetch('/api/queues', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+      const res = await fetch('/api/agent/metrics', {
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to fetch queues');
-      }
-      return res.json() as Promise<ApiResponse<Queue[]>>;
+      const json = await res.json() as ApiResponse<SystemMetrics>;
+      return json.data!;
     },
-    enabled: !!token && !!effectiveTenantId,
-    refetchInterval: 10000
+    refetchInterval: 30000,
+    enabled: !!token && !!selectedTenantId,
   });
-  const queues: Queue[] = queuesResponse.data ?? [];
-
-  const toggleQueueMutation = useMutation({
-    mutationFn: async (queueId: string) => {
-      const queuesData = queryClient.getQueryData<ApiResponse<Queue[]>>(['queues', effectiveTenantId]);
-      const queue = (queuesData?.data ?? []).find(q => q.id === queueId);
-      if (!queue || !userId) throw new Error('Invalid queue or user');
-      const isJoined = queue.assignedAgentIds?.includes(userId) ?? false;
-      const endpoint = `/api/queues/${queueId}/${isJoined ? 'leave' : 'join'}`;
-      const res = await fetch(endpoint, {
+  const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
+  const dispatchOffline = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/internal/offline/${id}/dispatch`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId! }
+        headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`, 
+            'X-Tenant-ID': selectedTenantId || '' 
+        },
+        body: JSON.stringify({ agentName: userName })
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Toggle failed');
-      }
-      return res.json();
+      return await res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['queues', effectiveTenantId] });
-      toast.success('Queue availability updated');
-    },
-    onError: (error: any) => toast.error(error.message),
-  });
-  // Cleanup stale active conversation focus
-  useEffect(() => {
-    if (activeId && conversations.length > 0) {
-      const stillActive = conversations.find(c => c.id === activeId && c.status !== 'ended');
-      if (!stillActive) {
-        setActiveId(null);
-      }
+      queryClient.invalidateQueries({ queryKey: ['offline', selectedTenantId] });
+      toast.success('Offline request marked as dispatched');
     }
-  }, [conversations, activeId, setActiveId]);
-  const { messages, sendMessage, claimConversation, endConversation, isEnding } = useChat(activeId);
+  });
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!msgInput.trim()) return;
     sendMessage(msgInput);
     setMsgInput('');
   };
-  const myChats = (conversations ?? []).filter(c => c.ownerId === userId && c.status === 'owned');
-  const unassigned = (conversations ?? []).filter(c => c.status === 'unassigned');
-  const activeConv = (conversations ?? []).find(c => c.id === activeId);
+  const myChats = conversations.filter(c => c.ownerId === userId && c.status === 'owned');
+  const unassigned = conversations.filter(c => c.status === 'unassigned');
+  const activeConv = conversations.find(c => c.id === activeId);
   return (
     <MainLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="py-8 md:py-10 lg:py-12 flex flex-col gap-8">
+        <div className="py-6 flex flex-col gap-6">
           <Tabs defaultValue="live" className="w-full">
-            <div className="flex items-center justify-between mb-6">
-              <div className="space-y-1">
-                <h1 className="text-3xl font-bold tracking-tight text-foreground">Agent Console</h1>
-                <p className="text-sm text-muted-foreground">Manage presence and active sessions.</p>
-              </div>
-              <TabsList className="bg-secondary p-1">
+            <div className="flex items-center justify-between mb-4">
+              <TabsList className="bg-slate-100 border p-1">
                 <TabsTrigger value="live" className="gap-2"><MessageCircle className="w-4 h-4" /> Live</TabsTrigger>
-                <TabsTrigger value="history" className="gap-2"><History className="w-4 h-4" /> Event Log</TabsTrigger>
-                <TabsTrigger value="inbox" className="gap-2"><Inbox className="w-4 h-4" /> Offline</TabsTrigger>
+                <TabsTrigger value="inbox" className="gap-2"><Inbox className="w-4 h-4" /> Inbox</TabsTrigger>
+                <TabsTrigger value="insights" className="gap-2"><BarChart3 className="w-4 h-4" /> Insights</TabsTrigger>
+                {userRole === 'superadmin' && <TabsTrigger value="platform" className="gap-2"><Database className="w-4 h-4" /> Platform</TabsTrigger>}
               </TabsList>
             </div>
-            <TabsContent value="live" className="mt-0 h-[calc(100vh-16rem)] min-h-[600px]">
-              <div className="h-full grid grid-cols-12 gap-6">
-                <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
-                  <Card className="shadow-sm shrink-0">
-                    <CardHeader className="p-4 border-b bg-muted/50"><CardTitle className="text-xs font-bold uppercase text-muted-foreground">Status</CardTitle></CardHeader>
-                    <CardContent className="p-4 flex items-center justify-between">
-                      <span className="text-sm font-bold capitalize">{presenceStatus}</span>
-                      <Switch checked={isOnline} onCheckedChange={(c) => toast.info('Updating presence...')} />
-                    </CardContent>
-                  </Card>
-                  <Card className="flex flex-col flex-1 overflow-hidden shadow-soft">
-                    <CardHeader className="p-4 border-b bg-muted/50 shrink-0"><CardTitle className="text-xs font-bold uppercase text-muted-foreground">Sessions</CardTitle></CardHeader>
-                    <ScrollArea className="flex-1">
-                      <div className="p-4 space-y-6">
-                         <div className="space-y-2">
-                           <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Active ({myChats.length})</p>
-                           {myChats.map(c => (
-                             <div key={c.id} onClick={() => setActiveId(c.id)} className={cn("p-3 rounded-xl border cursor-pointer transition-all", activeId === c.id ? "bg-primary text-primary-foreground border-primary" : "bg-white hover:bg-slate-50")}>
-                               <p className="font-bold truncate">{c.contactName}</p>
-                               <p className="text-[10px] opacity-70">Updated {formatDistanceToNow(c.updatedAt)} ago</p>
-                             </div>
-                           ))}
-                         </div>
-                         <div className="space-y-2 border-t pt-4">
-                           <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Claimable ({unassigned.length})</p>
-                           {unassigned.map(c => (
-                             <div key={c.id} className="p-3 rounded-xl border bg-slate-50/50 border-dashed space-y-2">
-                               <p className="text-xs font-bold truncate">{c.contactName}</p>
-                               <Button size="sm" variant="outline" className="w-full h-7 text-[10px] uppercase font-bold" onClick={() => claimConversation(c.id)}>Claim</Button>
-                             </div>
-                           ))}
-                         </div>
-                      </div>
-                    </ScrollArea>
-                  </Card>
-                  <Card className="flex-1 shadow-sm overflow-hidden">
-                    <CardHeader className="p-4 border-b bg-muted/50"><CardTitle className="text-xs font-bold uppercase text-muted-foreground">Queues</CardTitle></CardHeader>
-                    <CardContent className="p-4 space-y-3 max-h-80 overflow-y-auto">
-                      {queues.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-12 italic">No queues configured</p>
-                      ) : (
-                        queues.map((q) => {
-                          const isJoined = (q.assignedAgentIds || []).includes(userId || '');
-                          return (
-                            <div key={q.id} className="flex items-center justify-between p-3 rounded-lg border bg-card/50 hover:bg-card transition-all">
-                              <div className="space-y-1 flex-1 min-w-0">
-                                <p className="font-medium text-sm truncate">{q.name}</p>
-                                <p className="text-xs text-muted-foreground">Priority {q.priority} • Capacity {q.assignedAgentIds?.length || 0}/{q.capacityMax}</p>
-                              </div>
-                              <Switch 
-                                checked={isJoined} 
-                                onCheckedChange={() => toggleQueueMutation.mutate(q.id)} 
-                                disabled={!userId || toggleQueueMutation.isPending} 
-                              />
+            <TabsContent value="live" className="mt-0">
+              <div className="h-[calc(100vh-14rem)] grid grid-cols-12 gap-4">
+                <Card className="col-span-3 flex flex-col overflow-hidden shadow-sm">
+                   <CardHeader className="p-4 border-b">
+                      <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                        <Clock className="w-4 h-4" /> Queues
+                      </CardTitle>
+                   </CardHeader>
+                   <ScrollArea className="flex-1">
+                      <div className="p-3 space-y-4">
+                        <div className="space-y-2">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">My Chats</p>
+                          {myChats.map(c => (
+                            <div 
+                              key={c.id} 
+                              onClick={() => setActiveId(c.id)}
+                              className={cn(
+                                "p-3 rounded-lg cursor-pointer border transition-all text-sm",
+                                activeId === c.id ? "bg-cyan-50 border-cyan-500 shadow-sm" : "hover:bg-slate-50 bg-white"
+                              )}
+                            >
+                              <div className="font-bold truncate">{c.contactName}</div>
+                              <div className="text-xs text-muted-foreground">{formatDistanceToNow(c.updatedAt, { addSuffix: true })}</div>
                             </div>
-                          );
-                        })
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-                <Card className="col-span-9 flex flex-col overflow-hidden shadow-soft h-full">
+                          ))}
+                          {myChats.length === 0 && <p className="text-xs italic text-muted-foreground text-center p-4">No active chats</p>}
+                        </div>
+                        <div className="space-y-2 pt-2 border-t">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase">Unassigned</p>
+                          {unassigned.map(c => (
+                            <div key={c.id} className="p-3 rounded-lg border bg-white space-y-2">
+                              <div className="font-medium text-sm">{c.contactName}</div>
+                              <Button size="sm" variant="outline" className="w-full h-7 text-xs" onClick={() => claimConversation(c.id)}>Claim</Button>
+                            </div>
+                          ))}
+                          {unassigned.length === 0 && <p className="text-xs italic text-muted-foreground text-center p-4">Queue empty</p>}
+                        </div>
+                      </div>
+                   </ScrollArea>
+                </Card>
+                <Card className="col-span-6 flex flex-col overflow-hidden shadow-sm relative">
                   {!activeId ? (
-                    <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-slate-50/30">
-                       <MessageCircle className="w-12 h-12 text-slate-200 mb-4" />
-                       <h3 className="font-bold text-foreground">Select a session</h3>
-                       <p className="text-sm text-muted-foreground">Select a conversation to start messaging visitors.</p>
+                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-12 text-center">
+                       <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4"><MessageCircle className="w-8 h-8 text-slate-300" /></div>
+                       <h3 className="font-bold text-slate-700">Waiting for interaction</h3>
+                       <p className="text-sm">Select a conversation from the queue to start responding.</p>
                     </div>
                   ) : (
                     <>
-                      <div className="p-4 border-b bg-background flex justify-between items-center shadow-sm z-10">
+                      <div className="p-4 border-b bg-white flex justify-between items-center">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">{activeConv?.contactName?.[0]}</div>
-                          <div><p className="font-bold">{activeConv?.contactName}</p><p className="text-[10px] uppercase text-muted-foreground">{activeConv?.status}</p></div>
+                          <div className="w-8 h-8 rounded-full bg-cyan-600 flex items-center justify-center text-white text-xs font-bold">{activeConv?.contactName[0]}</div>
+                          <span className="font-bold">{activeConv?.contactName}</span>
                         </div>
-                        <Button variant="ghost" size="sm" disabled={isEnding} onClick={() => endConversation(activeId)} className="text-destructive font-bold h-8">
-                          {isEnding ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <Power className="w-3 h-3 mr-2" />}
-                          Close Chat
-                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => endConversation(activeId)} className="text-destructive hover:bg-destructive/10"><Power className="w-4 h-4 mr-2" /> End</Button>
                       </div>
                       <ScrollArea className="flex-1 p-6">
                         <div className="space-y-4">
                           {messages.map(m => (
-                            <div key={m.id} className={cn("flex flex-col max-w-[80%]", m.senderType === 'agent' ? "ml-auto items-end" : "items-start")}>
-                              <div className={cn("px-4 py-2 rounded-2xl text-sm shadow-sm", m.senderType === 'agent' ? "bg-primary text-primary-foreground" : "bg-white border")}>{m.content}</div>
-                              <span className="text-[10px] text-muted-foreground mt-1">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            <div key={m.id} className={cn("flex flex-col max-w-[85%]", m.senderType === 'agent' ? "ml-auto items-end" : "mr-auto items-start")}>
+                              <div className={cn("px-4 py-2 rounded-2xl text-sm", m.senderType === 'agent' ? "bg-cyan-600 text-white rounded-br-none" : "bg-slate-100 border text-slate-800 rounded-bl-none")}>
+                                {m.content}
+                              </div>
+                              <span className="text-[10px] text-muted-foreground mt-1 px-1">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
                           ))}
                           <div ref={scrollRef} />
                         </div>
                       </ScrollArea>
-                      <div className="p-4 border-t bg-white">
-                        <form onSubmit={handleSend} className="flex gap-2 p-1 rounded-xl border bg-slate-50">
-                          <Input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="Type a message..." className="bg-transparent border-0 shadow-none focus-visible:ring-0" />
-                          <Button size="icon" disabled={!msgInput.trim()} type="submit"><Send className="w-4 h-4" /></Button>
+                      <div className="p-4 border-t bg-slate-50">
+                        <form onSubmit={handleSend} className="flex gap-2">
+                          <Input placeholder="Type a message..." className="bg-white" value={msgInput} onChange={(e) => setMsgInput(e.target.value)} />
+                          <Button type="submit" size="icon" className="bg-cyan-600 shrink-0" disabled={!msgInput.trim()}><Send className="w-4 h-4" /></Button>
                         </form>
                       </div>
                     </>
                   )}
                 </Card>
+                <Card className="col-span-3 flex flex-col overflow-hidden shadow-sm">
+                   <CardHeader className="p-4 border-b">
+                      <CardTitle className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Profile</CardTitle>
+                   </CardHeader>
+                   <CardContent className="p-6 text-center">
+                      {activeConv ? (
+                        <div className="space-y-6">
+                          <div className="w-20 h-20 bg-slate-100 rounded-full mx-auto flex items-center justify-center"><UserIcon className="w-10 h-10 text-slate-400" /></div>
+                          <div>
+                            <h4 className="font-bold text-lg">{activeConv.contactName}</h4>
+                            <p className="text-xs text-muted-foreground">{activeConv.contactEmail || 'visitor@anon.com'}</p>
+                          </div>
+                          <div className="pt-6 border-t text-left space-y-4">
+                            <div><label className="text-[10px] font-bold text-slate-400 uppercase">Queue</label><p className="text-sm">General Support</p></div>
+                            <div><label className="text-[10px] font-bold text-slate-400 uppercase">Wait Time</label><p className="text-sm">{formatDistanceToNow(activeConv.createdAt)}</p></div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-12 opacity-50"><UserIcon className="w-10 h-10 mx-auto text-slate-300" /><p className="text-xs mt-2">No user selected</p></div>
+                      )}
+                   </CardContent>
+                </Card>
               </div>
             </TabsContent>
-            <TabsContent value="history">
-              <Card className="border-none ring-1 ring-slate-200">
-                <CardHeader className="border-b">
-                  <CardTitle>Tenant Activity Stream</CardTitle>
-                  <CardDescription>Auditing event-driven automation logs and lifecycle history.</CardDescription>
+            <TabsContent value="inbox" className="mt-0">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Offline Leads</CardTitle>
+                  <CardDescription>Customer inquiries captured when no agents were available.</CardDescription>
                 </CardHeader>
-                <CardContent className="p-0">
+                <CardContent>
                   <Table>
-                    <TableHeader className="bg-slate-50">
+                    <TableHeader>
                       <TableRow>
-                        <TableHead className="px-6">Timestamp</TableHead>
-                        <TableHead>Event</TableHead>
-                        <TableHead>Action Log</TableHead>
+                        <TableHead>Visitor</TableHead>
+                        <TableHead>Subject</TableHead>
+                        <TableHead>Received</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {eventLog.map(ev => (
-                        <TableRow key={ev.id}>
-                          <TableCell className="px-6 py-4 text-xs font-mono">{new Date(ev.timestamp).toLocaleString()}</TableCell>
-                          <TableCell><Badge variant="outline" className="capitalize">{ev.type.replace('.', ' ')}</Badge></TableCell>
-                          <TableCell className="text-xs text-muted-foreground max-w-xs truncate">{JSON.stringify(ev.payload)}</TableCell>
-                          <TableCell><div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> <span className="text-xs">Executed</span></div></TableCell>
+                      {offlineRequests.length === 0 ? (
+                        <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic">No offline requests found</TableCell></TableRow>
+                      ) : offlineRequests.map(r => (
+                        <TableRow key={r.id}>
+                          <TableCell>
+                            <div className="font-medium">{r.visitorName}</div>
+                            <div className="text-xs text-muted-foreground">{r.visitorEmail}</div>
+                          </TableCell>
+                          <TableCell className="max-w-xs truncate">{r.subject}</TableCell>
+                          <TableCell className="text-xs">{new Date(r.createdAt).toLocaleString()}</TableCell>
+                          <TableCell>
+                            <Badge variant={r.status === 'pending' ? 'outline' : 'secondary'} className={r.status === 'pending' ? 'text-amber-600 bg-amber-50 border-amber-200' : ''}>
+                              {r.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                             {r.status === 'pending' ? (
+                               <Button size="sm" className="gap-2" onClick={() => dispatchOffline.mutate(r.id)} disabled={dispatchOffline.isPending}>
+                                 <MailCheck className="w-4 h-4" /> Dispatch
+                               </Button>
+                             ) : (
+                               <span className="text-xs text-muted-foreground">By {r.dispatchedBy}</span>
+                             )}
+                          </TableCell>
                         </TableRow>
                       ))}
-                      {eventLog.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-10 italic text-muted-foreground">No events recorded</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </CardContent>
               </Card>
+            </TabsContent>
+            <TabsContent value="insights" className="mt-0">
+               <div className="grid md:grid-cols-4 gap-6 mb-8">
+                  {[
+                    { label: 'Avg Response', value: `${metrics?.avgResponseTime ?? 0}s`, desc: 'Across all channels', icon: Clock },
+                    { label: 'Resolution Rate', value: `${metrics?.resolutionRate ?? 0}%`, desc: 'Closed in first 24h', icon: MailCheck },
+                    { label: 'Active Agents', value: metrics?.activeAgents ?? 0, desc: 'Currently online', icon: UserIcon },
+                    { label: 'Total Convs', value: metrics?.totalConvs ?? 0, desc: 'Lifetime volume', icon: MessageCircle },
+                  ].map(stat => (
+                    <Card key={stat.label}>
+                      <CardContent className="pt-6">
+                        <div className="flex justify-between items-start mb-2">
+                           <p className="text-sm font-medium text-muted-foreground">{stat.label}</p>
+                           <stat.icon className="w-4 h-4 text-cyan-600" />
+                        </div>
+                        <h3 className="text-2xl font-bold">{stat.value}</h3>
+                        <p className="text-xs text-slate-500 mt-1">{stat.desc}</p>
+                      </CardContent>
+                    </Card>
+                  ))}
+               </div>
+               <Card>
+                  <CardHeader><CardTitle>Conversation Volume (24h)</CardTitle></CardHeader>
+                  <CardContent>
+                    <div className="h-[300px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={metrics?.hourlyMessageVolume || []}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="timestamp" axisLine={false} tickLine={false} fontSize={12} tick={{ fill: '#94a3b8' }} />
+                          <YAxis axisLine={false} tickLine={false} fontSize={12} tick={{ fill: '#94a3b8' }} />
+                          <Tooltip 
+                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                            cursor={{ fill: '#f8fafc' }}
+                          />
+                          <Bar dataKey="value" fill="#06B6D4" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+               </Card>
             </TabsContent>
           </Tabs>
         </div>

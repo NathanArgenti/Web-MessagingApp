@@ -10,6 +10,37 @@ export interface User {
   isOnline: boolean;
   presenceStatus?: PresenceStatus;
 }
+export type OfflineRequestStatus = 'pending' | 'dispatched';
+export interface OfflineRequest {
+  id: string;
+  tenantId: string;
+  queueId?: string;
+  visitorName: string;
+  visitorEmail: string;
+  subject: string;
+  message: string;
+  status: OfflineRequestStatus;
+  createdAt: number;
+  dispatchTimestamp?: number;
+  dispatchedBy?: string;
+}
+export interface MetricPoint {
+  timestamp: string;
+  value: number;
+}
+export interface SystemMetrics {
+  hourlyMessageVolume: MetricPoint[];
+  avgResponseTime: number; // in seconds
+  resolutionRate: number; // percentage
+  activeAgents: number;
+  totalConvs: number;
+}
+export interface GlobalMetrics {
+  totalTenants: number;
+  totalMessages: number;
+  activeAgentsPlatform: number;
+  uptime: string;
+}
 export type EventType = 'conversation.started' | 'conversation.ended' | 'agent.assigned';
 export type ActionType = 'webhook' | 'email_mock' | 'log';
 export interface Workflow {
@@ -74,6 +105,7 @@ export interface AuthPayload {
   user: User;
   token: string;
   tenant?: Tenant;
+  availableTenants?: { id: string; name: string }[];
 }
 export interface PublicConfig {
   tenantId: string;
@@ -84,11 +116,6 @@ export interface PublicConfig {
     welcomeMessage: string;
   };
   queues: { id: string; name: string }[];
-}
-export interface SuperAdminStats {
-  totalTenants: number;
-  activeAgents: number;
-  totalConversations: number;
 }
 export interface ApiResponse<T = unknown> {
   success: boolean;

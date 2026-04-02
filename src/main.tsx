@@ -10,9 +10,8 @@ import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 import '@/index.css';
 import { HomePage } from '@/pages/HomePage';
 import { LoginPage } from '@/pages/LoginPage';
-import { AgentConsole } from '@/pages/AgentConsole';
+import { AgentDashboard } from '@/pages/AgentDashboard';
 import { TenantAdmin } from '@/pages/TenantAdmin';
-import { SuperAdmin } from '@/pages/SuperAdmin';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { Toaster } from 'sonner';
 const queryClient = new QueryClient({
@@ -30,7 +29,7 @@ const router = createBrowserRouter([
     path: "/agent",
     element: (
       <AuthGuard roles={['agent', 'tenant_admin', 'superadmin']}>
-        <AgentConsole />
+        <AgentDashboard />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,
@@ -48,7 +47,7 @@ const router = createBrowserRouter([
     path: "/superadmin",
     element: (
       <AuthGuard roles={['superadmin']}>
-        <SuperAdmin />
+        <AgentDashboard />
       </AuthGuard>
     ),
     errorElement: <RouteErrorBoundary />,

@@ -1,5 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
-import type { User, Tenant, Queue, Conversation, Message, PresenceStatus, PublicConfig, SystemEvent, EventType, ConversationStatus } from '@shared/types';
+import type { 
+    User, Tenant, Queue, Conversation, Message, PresenceStatus, 
+    PublicConfig, SystemEvent, EventType, ConversationStatus,
+    OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint
+} from '@shared/types';
 import { nanoid } from 'nanoid';
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
@@ -64,12 +68,70 @@ export class GlobalDurableObject extends DurableObject {
                 const workflows = tenant.workflows.filter(w => w.eventType === event.type && w.active);
                 for (const wf of workflows) {
                     console.log(`[WORKFLOW] Triggered: ${wf.name} | Action: ${wf.actionType} | Target: ${wf.targetUrl}`);
-                    // In a real env, we'd perform fetch() here
                 }
             }
             event.processed = true;
         }
         await this.setStorage('outbox', outbox.filter(e => !e.processed));
+    }
+    // OFFLINE REQUESTS
+    async getOfflineRequests(tenantId: string): Promise<OfflineRequest[]> {
+        return (await this.getStorage<OfflineRequest[]>(`tenant:${tenantId}:offline_requests`)) || [];
+    }
+    async createOfflineRequest(req: Omit<OfflineRequest, 'id' | 'createdAt' | 'status'>): Promise<OfflineRequest> {
+        const newReq: OfflineRequest = {
+            ...req,
+            id: nanoid(),
+            status: 'pending',
+            createdAt: Date.now()
+        };
+        const key = `tenant:${req.tenantId}:offline_requests`;
+        const existing = await this.getOfflineRequests(req.tenantId);
+        existing.push(newReq);
+        await this.setStorage(key, existing);
+        return newReq;
+    }
+    async dispatchOfflineRequest(tenantId: string, requestId: string, agentName: string): Promise<boolean> {
+        const key = `tenant:${tenantId}:offline_requests`;
+        const requests = await this.getOfflineRequests(tenantId);
+        const idx = requests.findIndex(r => r.id === requestId);
+        if (idx === -1) return false;
+        requests[idx] = { 
+            ...requests[idx], 
+            status: 'dispatched', 
+            dispatchTimestamp: Date.now(), 
+            dispatchedBy: agentName 
+        };
+        await this.setStorage(key, requests);
+        return true;
+    }
+    // ANALYTICS
+    async getSystemMetrics(tenantId: string): Promise<SystemMetrics> {
+        const conversations = (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const activeAgents = users.filter(u => u.tenantId === tenantId && u.isOnline).length;
+        // Mocking hourly volume for chart demo
+        const hourlyVolume: MetricPoint[] = Array.from({ length: 24 }).map((_, i) => ({
+            timestamp: `${i}:00`,
+            value: Math.floor(Math.random() * 20)
+        }));
+        return {
+            hourlyMessageVolume: hourlyVolume,
+            avgResponseTime: 45, // Static mock
+            resolutionRate: 88, // Static mock
+            activeAgents,
+            totalConvs: conversations.length
+        };
+    }
+    async getGlobalMetrics(): Promise<GlobalMetrics> {
+        const tenants = (await this.getStorage<Tenant[]>('tenants')) || [];
+        const users = (await this.getStorage<User[]>('users')) || [];
+        return {
+            totalTenants: tenants.length,
+            totalMessages: 15420,
+            activeAgentsPlatform: users.filter(u => u.isOnline).length,
+            uptime: '99.99%'
+        };
     }
     async getAllTenants(): Promise<Tenant[]> {
         return (await this.getStorage<Tenant[]>('tenants')) || [];
@@ -133,15 +195,7 @@ export class GlobalDurableObject extends DurableObject {
         await this.emitEvent(tenantId, 'conversation.ended', convs[index]);
         return convs[index];
     }
-    async updateTenantSettings(tenantId: string, data: Partial<Tenant>): Promise<boolean> {
-        const tenants = await this.getAllTenants();
-        const index = tenants.findIndex(t => t.id === tenantId);
-        if (index === -1) return false;
-        tenants[index] = { ...tenants[index], ...data };
-        await this.setStorage('tenants', tenants);
-        return true;
-    }
-    async login(email: string): Promise<{ user: User; token: string; tenant?: Tenant } | null> {
+    async login(email: string): Promise<{ user: User; token: string; tenant?: Tenant; availableTenants: any[] } | null> {
         const users = (await this.getStorage<User[]>('users')) || [];
         const user = users.find(u => u.email === email);
         if (!user) return null;
@@ -150,10 +204,11 @@ export class GlobalDurableObject extends DurableObject {
         return {
             user,
             token: `mock-jwt-${user.id}-${Date.now()}`,
-            tenant
+            tenant,
+            availableTenants: user.role === 'superadmin' ? tenants.map(t => ({ id: t.id, name: t.name })) : (tenant ? [{ id: tenant.id, name: tenant.name }] : [])
         };
     }
-    async getMe(token: string): Promise<{ user: User; tenant?: Tenant } | null> {
+    async getMe(token: string): Promise<{ user: User; tenant?: Tenant; availableTenants: any[] } | null> {
         const parts = token.split('-');
         if (parts.length < 3) return null;
         const userId = parts[2];
@@ -162,7 +217,11 @@ export class GlobalDurableObject extends DurableObject {
         if (!user) return null;
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === user.tenantId);
-        return { user, tenant };
+        return { 
+            user, 
+            tenant,
+            availableTenants: user.role === 'superadmin' ? tenants.map(t => ({ id: t.id, name: t.name })) : (tenant ? [{ id: tenant.id, name: tenant.name }] : [])
+        };
     }
     async updatePresence(userId: string, status: PresenceStatus): Promise<void> {
         const users = (await this.getStorage<User[]>('users')) || [];
@@ -193,13 +252,11 @@ export class GlobalDurableObject extends DurableObject {
         await this.setStorage(key, msgs);
         return msg;
     }
-
     private async updateConvIndex(convId: string, tenantId: string, status: ConversationStatus): Promise<void> {
         const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
         index[convId] = {tenantId, status};
         await this.setStorage('conversations_index', index);
     }
-
     async getPublicConvStatus(convId: string): Promise<{status: string, ended: boolean} | null> {
         const index = await this.getStorage<Record<string, {tenantId: string, status: ConversationStatus}>>('conversations_index') || {};
         const entry = index[convId];

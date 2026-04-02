@@ -12,48 +12,64 @@ interface ChatWidgetProps {
 export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [config, setConfig] = useState<PublicConfig | null>(null);
-  const [session, setSession] = useState<{ convId: string, visitorId: string } | null>(() => {
-    const saved = localStorage.getItem(`mercury_session_${siteKey}`);
-    return saved ? JSON.parse(saved) : null;
-  });
-  const sessionRef = useRef(session);
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
+  const [session, setSession] = useState<{ convId: string, visitorId: string } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isEnded, setIsEnded] = useState(false);
   const [input, setInput] = useState('');
   const [isStarting, setIsStarting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sessionRef = useRef(session);
+  // Initialize session from storage in effect to prevent runtime hydration/hook errors
   useEffect(() => {
+    const saved = localStorage.getItem(`mercury_session_${siteKey}`);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        setSession(parsed);
+        sessionRef.current = parsed;
+      } catch (e) {
+        console.error("Failed to parse session", e);
+      }
+    }
+  }, [siteKey]);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    if (!siteKey) return;
     fetch(`/api/public/config/${siteKey}`)
       .then(res => res.json())
       .then((json: ApiResponse<PublicConfig>) => {
         if (json.success) setConfig(json.data!);
-      });
+      })
+      .catch(err => console.error("Config fetch error", err));
   }, [siteKey]);
   useEffect(() => {
     if (!sessionRef.current?.convId || !isOpen || isEnded) return;
     const interval = setInterval(() => {
+      if (!sessionRef.current) return;
       fetch(`/api/conversations/${sessionRef.current.convId}/messages`)
         .then(res => res.json())
         .then((json: ApiResponse<Message[]>) => {
           if (json.success) setMessages(json.data ?? []);
-        });
-      // Simple status check
+        })
+        .catch(err => console.error("Poll messages error", err));
       fetch(`/api/public/conversations/${sessionRef.current.convId}/status`)
         .then(res => res.json())
         .then((json: ApiResponse<{status: string, ended: boolean}>) => {
           if (json.success && json.data?.ended) setIsEnded(true);
-        });
+        })
+        .catch(err => console.error("Poll status error", err));
     }, 4000);
     return () => clearInterval(interval);
-  }, [isOpen, isEnded, sessionRef.current?.convId]);
+  }, [isOpen, isEnded]);
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (scrollRef.current) {
+      scrollRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
   const startChat = async () => {
-    if (!config || (config.queues ?? []).length === 0) return;
+    if (!config || !config.queues || config.queues.length === 0) return;
     setIsStarting(true);
     try {
       const visitorId = nanoid();
@@ -89,18 +105,22 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     if (!input.trim() || !session || isEnded) return;
     const content = input;
     setInput('');
-    const res = await fetch('/api/public/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        conversationId: session.convId,
-        visitorId: session.visitorId,
-        content
-      })
-    });
-    const json = await res.json() as ApiResponse<Message>;
-    if (json.success) {
-      setMessages(prev => [...(prev ?? []), json.data!]);
+    try {
+      const res = await fetch('/api/public/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: session.convId,
+          visitorId: session.visitorId,
+          content
+        })
+      });
+      const json = await res.json() as ApiResponse<Message>;
+      if (json.success) {
+        setMessages(prev => [...(prev ?? []), json.data!]);
+      }
+    } catch (err) {
+      console.error("Send message error", err);
     }
   };
   if (!config) return null;
@@ -145,10 +165,10 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
                     </div>
                   </ScrollArea>
                   {isEnded && (
-                    <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center space-y-4">
+                    <div className="absolute inset-0 bg-white/95 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center space-y-4">
                       <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center"><Power className="w-6 h-6 text-slate-400" /></div>
                       <h4 className="font-bold text-slate-800">Session Ended</h4>
-                      <p className="text-sm text-slate-500">The agent has closed this conversation. We hope we helped!</p>
+                      <p className="text-sm text-slate-500">The agent has closed this conversation.</p>
                       <Button variant="outline" className="gap-2" onClick={resetSession}><RotateCcw className="w-4 h-4" /> Start New Chat</Button>
                     </div>
                   )}
