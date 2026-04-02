@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+
 import { MessageCircle, X, Send, Loader2, Mail, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ApiResponse, Message, PublicConfig, Conversation, QueueStatus } from '@shared/types';
-import { nanoid } from 'nanoid';
+
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 interface ChatWidgetProps {
@@ -85,7 +85,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     if (!config) return;
     setIsStarting(true);
     try {
-      const visitorId = nanoid();
+      const visitorId = crypto.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).substr(2);
       const res = await fetch('/api/public/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,14 +157,8 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const isAvailable = status?.available ?? true;
   return (
     <div className={cn("fixed bottom-6 z-[100] font-sans", positionClass)}>
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="mb-4 w-[360px] h-[520px] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200"
-          >
+      {isOpen && (
+        <div className="mb-4 w-[360px] h-[520px] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 animate-in fade-in-50 slide-in-from-bottom-2 duration-300">
             <div className="p-4 flex justify-between items-center text-white" style={{ backgroundColor: primaryColor }}>
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
@@ -179,9 +173,9 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-hidden">
               {offlineSubmitted ? (
                 <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
-                  <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center animate-pulse scale-100">
                     <CheckCircle2 className="w-10 h-10 text-green-500" />
-                  </motion.div>
+                  </div>
                   <h4 className="font-bold text-slate-800">Message Sent</h4>
                   <p className="text-sm text-slate-500">We've received your request and will get back to you soon.</p>
                 </div>
@@ -246,13 +240,10 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
             <div className="py-2 bg-white text-center border-t">
               <span className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">Powered by Mercury</span>
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
-      <motion.button
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        className="h-14 w-14 rounded-full shadow-2xl flex items-center justify-center text-white relative"
+      <button
+        className="h-14 w-14 rounded-full shadow-2xl flex items-center justify-center text-white relative hover:scale-105 active:scale-95 transition-transform duration-200"
         style={{ backgroundColor: primaryColor }}
         onClick={() => setIsOpen(!isOpen)}
       >
@@ -260,7 +251,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
         {!isAvailable && !isOpen && !session && (
           <div className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 rounded-full border-2 border-white" />
         )}
-      </motion.button>
+      </button>
     </div>
   );
 }
