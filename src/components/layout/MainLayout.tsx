@@ -35,16 +35,15 @@ import { useNavigate, Link, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 export function MainLayout({ children }: { children: React.ReactNode }) {
-  const user = useAuthStore(s => s.user);
-  const tenant = useAuthStore(s => s.tenant);
+  const userRole = useAuthStore(s => s.user?.role);
+  const userName = useAuthStore(s => s.user?.name);
+  const tenantName = useAuthStore(s => s.tenant?.name);
   const availableTenants = useAuthStore(s => s.availableTenants);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
   const setSelectedTenantId = useAuthStore(s => s.setSelectedTenantId);
   const clearAuth = useAuthStore(s => s.clearAuth);
   const setActiveConversationId = useAuthStore(s => s.setActiveConversationId);
-  const userRole = user?.role;
-  const userName = user?.name;
-  const tenantName = tenant?.name;
+
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();

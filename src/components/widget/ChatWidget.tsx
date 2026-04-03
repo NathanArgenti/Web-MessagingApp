@@ -15,6 +15,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const [config, setConfig] = useState<PublicConfig | null>(null);
   const [status, setStatus] = useState<QueueStatus | null>(null);
   const [session, setSession] = useState<{ convId: string, visitorId: string } | null>(null);
+  const [isEnded, setIsEnded] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isStarting, setIsStarting] = useState(false);
@@ -24,6 +25,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const clearChat = useCallback(() => {
     localStorage.removeItem(`mercury_session_${siteKey}`);
     setSession(null);
+    setIsEnded(false);
     setMessages([]);
     setShowOfflineForm(false);
     setOfflineSubmitted(false);
@@ -76,6 +78,25 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     pollStatus();
     return () => clearInterval(interval);
   }, [config, isOpen, session]);
+  useEffect(() => {
+    if (!session?.convId || !isOpen || isEnded) return;
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/public/conversations/${session.convId}/status`);
+        const json = await res.json() as ApiResponse<{ ended: boolean }>;
+        if (json.success && json.data?.ended) {
+          setIsEnded(true);
+        }
+      } catch (e) {
+        console.error("Status check failed", e);
+      }
+    };
+    const interval = setInterval(checkStatus, 4000);
+    checkStatus();
+    return () => {
+      clearInterval(interval);
+    };
+  }, [session?.convId, isOpen, isEnded]);
   useEffect(() => {
     if (!session?.convId || !isOpen) return;
     const controller = new AbortController();
@@ -224,6 +245,16 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
               </div>
             </div>
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-hidden">
+              {isEnded && (
+                <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+                    <CheckCircle2 className="w-6 h-6 text-slate-400" />
+                  </div>
+                  <h4 className="font-bold text-slate-800">Session Ended</h4>
+                  <p className="text-sm text-slate-500 mb-6">The agent has closed this conversation. Thank you for reaching out!</p>
+                  <Button variant="outline" size="sm" onClick={clearChat} className="rounded-xl">Start New Chat</Button>
+                </div>
+              )}
               {offlineSubmitted ? (
                 <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
                   <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center animate-pulse scale-100">
@@ -284,8 +315,8 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
                     </div>
                   </ScrollArea>
                   <form onSubmit={handleSend} className="p-4 bg-white border-t flex gap-2">
-                    <Input placeholder="Message..." className="bg-slate-50 border-0" value={input} onChange={e => setInput(e.target.value)} />
-                    <Button size="icon" style={{ backgroundColor: primaryColor }} className="text-white" type="submit" disabled={!input.trim()}><Send className="w-4 h-4" /></Button>
+                    <Input placeholder="Message..." className="bg-slate-50 border-0" value={input} onChange={e => setInput(e.target.value)} disabled={isEnded} />
+                    <Button size="icon" style={{ backgroundColor: primaryColor }} className="text-white" type="submit" disabled={!input.trim() || isEnded}><Send className="w-4 h-4" /></Button>
                   </form>
                 </>
               )}

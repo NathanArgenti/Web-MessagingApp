@@ -78,6 +78,13 @@ export function userRoutes(rawApp: any) {
         if (!data) return c.json({ success: false, error: 'Site not found' }, 404);
         return c.json({ success: true, data });
     });
+    app.get('/api/public/conversations/:id/status', async (c) => {
+        const id = c.req.param('id');
+        const stub = getStub(c);
+        const conv = await stub.getConversationById(id);
+        const ended = conv ? conv.status === 'ended' : true;
+        return c.json({ success: true, data: { status: conv?.status || 'ended', ended } });
+    });
     app.get('/api/public/queue/:id/status', async (c) => {
         const id = c.req.param('id');
         const stub = getStub(c);

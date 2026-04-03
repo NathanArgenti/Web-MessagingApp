@@ -5,10 +5,11 @@ import { toast } from 'sonner';
 export function useChat(conversationId: string | null) {
   const queryClient = useQueryClient();
   const token = useAuthStore(s => s.token);
-  const user = useAuthStore(s => s.user);
-  const tenant = useAuthStore(s => s.tenant);
+  const userId = useAuthStore(s => s.user?.id);
+  const userTenantId = useAuthStore(s => s.user?.tenantId);
+  const tenantId = useAuthStore(s => s.tenant?.id);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
-  const effectiveTenantId = selectedTenantId || user?.tenantId || tenant?.id || '';
+  const effectiveTenantId = selectedTenantId || userTenantId || tenantId || '';
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['messages', conversationId],
     queryFn: async () => {
@@ -18,6 +19,9 @@ export function useChat(conversationId: string | null) {
         if (token) headers['Authorization'] = `Bearer ${token}`;
         if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
         const res = await fetch(`/api/conversations/${conversationId}/messages`, { headers });
+        if (res.status === 403 || res.status === 404) {
+          return [];
+        }
         const json = await res.json() as ApiResponse<Message[]>;
         return json.data ?? [];
       } catch (e) {
