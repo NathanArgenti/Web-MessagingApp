@@ -33,7 +33,14 @@ export function userRoutes(app: Hono<{ Bindings: any }>): void {
         const stub = getStub(c);
         const conv = await stub.getConversationById(id);
         const ended = conv ? conv.status === 'ended' : true;
-        return c.json({ success: true, data: { status: conv.status || 'ended', ended } });
+        return c.json({ success: true, data: { status: conv ? (conv.status || 'ended') : 'ended', ended } });
+    });
+
+    app_.get('/api/public/queue/:id/status', async (c: any) => {
+        const id = c.req.param('id');
+        const stub = getStub(c);
+        const data = await stub.getQueueStatus(id);
+        return c.json({ success: true, data });
     });
     // AUTH & AGENT ENDPOINTS
     app_.get('/api/auth/me', async (c: any) => {
@@ -92,6 +99,26 @@ export function userRoutes(app: Hono<{ Bindings: any }>): void {
         const data = await stub.getQueues(tenantId);
         return c.json({ success: true, data });
     });
+
+    app_.post('/api/queues/:queueId/join', enforceTenantContext, async (c: any) => {
+        const queueId = c.req.param('queueId');
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (me.user.role === 'superadmin') return c.json({ success: false, error: 'Forbidden' }, 403);
+        await stub.joinQueue(me.user.id, queueId);
+        return c.json({ success: true });
+    });
+
+    app_.post('/api/queues/:queueId/leave', enforceTenantContext, async (c: any) => {
+        const queueId = c.req.param('queueId');
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (me.user.role === 'superadmin') return c.json({ success: false, error: 'Forbidden' }, 403);
+        await stub.leaveQueue(me.user.id, queueId);
+        return c.json({ success: true });
+    });
     app_.get('/api/conversations/:id/messages', async (c: any) => {
         const id = c.req.param('id');
         const stub = getStub(c);
@@ -101,6 +128,9 @@ export function userRoutes(app: Hono<{ Bindings: any }>): void {
     app_.post('/api/conversations/:id/messages', async (c: any) => {
         const id = c.req.param('id');
         const body = await c.req.json();
+        if (!body.content || typeof body.content !== 'string') {
+            return c.json({ success: false, error: 'Content required' }, 400);
+        }
         const token = getAuthToken(c);
         const stub = getStub(c);
         const conv = await stub.getConversationById(id);
@@ -109,8 +139,8 @@ export function userRoutes(app: Hono<{ Bindings: any }>): void {
         const message: Message = {
             id: crypto.randomUUID(),
             conversationId: id,
-            senderId: token && me.user ? me.user.id : 'visitor',
-            senderType: token && me.user ? 'agent' : 'visitor',
+            senderId: token && me?.user ? me.user.id : 'visitor',
+            senderType: token && me?.user ? 'agent' : 'visitor',
             content: body.content,
             timestamp: Date.now()
         };

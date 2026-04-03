@@ -59,6 +59,48 @@ export function AgentDashboard() {
     refetchInterval: 10000,
     enabled: !!token && !!effectiveTenantId,
   });
+
+  const { data: queuesResponse = {data: [] as Queue[]}, refetch: refetchQueues } = useQuery({
+    queryKey: ['queues', effectiveTenantId],
+    queryFn: async () => {
+      if (!token || !effectiveTenantId) throw new Error('Missing auth');
+      const res = await fetch('/api/queues', {
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to fetch queues');
+      }
+      return res.json() as Promise<ApiResponse<Queue[]>>;
+    },
+    enabled: !!token && !!effectiveTenantId,
+    refetchInterval: 10000
+  });
+  const queues: Queue[] = queuesResponse.data ?? [];
+
+  const toggleQueueMutation = useMutation({
+    mutationFn: async (queueId: string) => {
+      const queuesData = queryClient.getQueryData<ApiResponse<Queue[]>>(['queues', effectiveTenantId]);
+      const queue = (queuesData?.data ?? []).find(q => q.id === queueId);
+      if (!queue || !userId) throw new Error('Invalid queue or user');
+      const isJoined = queue.assignedAgentIds?.includes(userId) ?? false;
+      const endpoint = `/api/queues/${queueId}/${isJoined ? 'leave' : 'join'}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId! }
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Toggle failed');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queues', effectiveTenantId] });
+      toast.success('Queue availability updated');
+    },
+    onError: (error: any) => toast.error(error.message),
+  });
   // Cleanup stale active conversation focus
   useEffect(() => {
     if (activeId && conversations.length > 0) {
@@ -128,6 +170,31 @@ export function AgentDashboard() {
                          </div>
                       </div>
                     </ScrollArea>
+                  </Card>
+                  <Card className="flex-1 shadow-sm overflow-hidden">
+                    <CardHeader className="p-4 border-b bg-muted/50"><CardTitle className="text-xs font-bold uppercase text-muted-foreground">Queues</CardTitle></CardHeader>
+                    <CardContent className="p-4 space-y-3 max-h-80 overflow-y-auto">
+                      {queues.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-12 italic">No queues configured</p>
+                      ) : (
+                        queues.map((q) => {
+                          const isJoined = (q.assignedAgentIds || []).includes(userId || '');
+                          return (
+                            <div key={q.id} className="flex items-center justify-between p-3 rounded-lg border bg-card/50 hover:bg-card transition-all">
+                              <div className="space-y-1 flex-1 min-w-0">
+                                <p className="font-medium text-sm truncate">{q.name}</p>
+                                <p className="text-xs text-muted-foreground">Priority {q.priority} • Capacity {q.assignedAgentIds?.length || 0}/{q.capacityMax}</p>
+                              </div>
+                              <Switch 
+                                checked={isJoined} 
+                                onCheckedChange={() => toggleQueueMutation.mutate(q.id)} 
+                                disabled={!userId || toggleQueueMutation.isPending} 
+                              />
+                            </div>
+                          );
+                        })
+                      )}
+                    </CardContent>
                   </Card>
                 </div>
                 <Card className="col-span-9 flex flex-col overflow-hidden shadow-soft h-full">
