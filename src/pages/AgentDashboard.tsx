@@ -27,7 +27,7 @@ export function AgentDashboard() {
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
   const presenceStatus = useAuthStore(s => s.user?.presenceStatus);
   const isOnline = useAuthStore(s => s.user?.isOnline);
-  const effectiveTenantId = selectedTenantId || tenant?.id || '';
+  const effectiveTenantId = selectedTenantId || tenant?.id;
   // Remove unused/incorrect contactName selector from auth store
   const [msgInput, setMsgInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -221,8 +221,8 @@ export function AgentDashboard() {
                           <p className="text-[10px] font-bold text-muted-foreground uppercase">Personal Batch ({myChats.length})</p>
                           {myChats.map(c => (
                             <div key={c.id} onClick={() => setActiveId(c.id)} className={cn("p-3 rounded-xl cursor-pointer border transition-all text-sm", activeId === c.id ? "bg-accent text-accent-foreground border-primary shadow-sm" : "hover:bg-accent/50 bg-background")}>
-                              <div className="font-bold truncate">{c.contactName}</div>
-                              <div className="text-[10px] text-muted-foreground">{formatDistanceToNow(c.updatedAt, { addSuffix: true })}</div>
+                              <div className="font-bold truncate">{c.contactName || 'Unknown'}</div>
+                              <div className="text-[10px] text-muted-foreground">{c.updatedAt ? formatDistanceToNow(c.updatedAt, { addSuffix: true }) : 'Just now'}</div>
                             </div>
                           ))}
                         </div>
@@ -230,7 +230,7 @@ export function AgentDashboard() {
                           <p className="text-[10px] font-bold text-muted-foreground uppercase">Available Queue ({unassigned.length})</p>
                           {unassigned.map(c => (
                             <div key={c.id} className="p-3 rounded-xl border bg-background space-y-2 border-dashed">
-                              <div className="font-medium text-xs">{c.contactName}</div>
+                              <div className="font-medium text-xs">{c.contactName || 'Unknown'}</div>
                               <Button size="sm" variant="outline" className="w-full h-7 text-[10px]" onClick={() => claimConversation(c.id)}>Claim Session</Button>
                             </div>
                           ))}
@@ -250,7 +250,7 @@ export function AgentDashboard() {
                     <>
                       <div className="p-4 border-b bg-background flex justify-between items-center shadow-sm z-10">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-secondary border flex items-center justify-center text-secondary-foreground text-xs font-bold">{activeConv?.contactName[0]}</div>
+                          <div className="w-8 h-8 rounded-full bg-secondary border flex items-center justify-center text-secondary-foreground text-xs font-bold">{activeConv?.contactName?.[0] || 'U'}</div>
                           <span className="font-bold text-foreground">{activeConv?.contactName}</span>
                         </div>
                         <Button variant="ghost" size="sm" onClick={() => endConversation(activeId)} className="text-destructive hover:bg-destructive/10"><Power className="w-4 h-4 mr-2" /> Close Chat</Button>
@@ -262,7 +262,7 @@ export function AgentDashboard() {
                               <div className={cn("px-4 py-2.5 rounded-2xl text-sm shadow-sm", m.senderType === 'agent' ? "bg-primary text-primary-foreground rounded-br-none" : "bg-muted border text-muted-foreground rounded-bl-none")}>
                                 {m.content}
                               </div>
-                              <span className="text-[10px] text-muted-foreground mt-1.5 px-1">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              <span className="text-[10px] text-muted-foreground mt-1.5 px-1">{m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Now'}</span>
                             </div>
                           ))}
                           <div ref={scrollRef} />
@@ -287,11 +287,11 @@ export function AgentDashboard() {
                         <div className="space-y-6">
                           <div className="w-20 h-20 bg-muted rounded-full mx-auto flex items-center justify-center border-4 border-background shadow-md"><UserIcon className="w-10 h-10 text-muted-foreground/50" /></div>
                           <div>
-                            <h4 className="font-bold text-lg text-foreground">{activeConv.contactName}</h4>
+                            <h4 className="font-bold text-lg text-foreground">{activeConv.contactName || 'Unknown'}</h4>
                             <p className="text-xs text-muted-foreground">{activeConv.contactEmail || 'No verified email'}</p>
                           </div>
                           <div className="pt-6 border-t text-left space-y-4">
-                            <div><label className="text-[10px] font-bold text-muted-foreground uppercase">Created</label><p className="text-sm font-medium">{formatDistanceToNow(activeConv.createdAt)} ago</p></div>
+                            <div><label className="text-[10px] font-bold text-muted-foreground uppercase">Created</label><p className="text-sm font-medium">{activeConv.createdAt ? formatDistanceToNow(activeConv.createdAt) + ' ago' : 'Unknown'}</p></div>
                           </div>
                         </div>
                       ) : (
@@ -329,7 +329,7 @@ export function AgentDashboard() {
                             <div className="text-xs text-muted-foreground">{r.visitorEmail}</div>
                           </TableCell>
                           <TableCell className="max-w-xs truncate">{r.subject}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{r.createdAt ? new Date(r.createdAt).toLocaleString() : 'Unknown'}</TableCell>
                           <TableCell>
                             <Badge variant={r.status === 'pending' ? 'outline' : 'secondary'}>
                               {r.status}
