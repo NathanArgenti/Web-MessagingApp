@@ -95,6 +95,7 @@ export function TenantAdmin() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': selectedTenantId || '',
           'X-Tenant-ID': selectedTenantId || ''
         },
         body: JSON.stringify(data)

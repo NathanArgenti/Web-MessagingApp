@@ -39,8 +39,11 @@ export function LoginPage() {
       const res = await fetch('/api/auth/entra/mock');
       const json = await res.json();
       if (json.success) {
-        setAuth(json.data.user, json.data.token, json.data.tenant);
+        setAuth(json.data.user, json.data.token, json.data.tenant, json.data.availableTenants || []);
+        toast.success(`SSO Simulated: Welcome ${json.data.user.name}`);
         navigate('/superadmin');
+      } else {
+        toast.error(json.error || 'Mock SSO Failed');
       }
     } catch (err) {
       toast.error('SSO Mock failed');

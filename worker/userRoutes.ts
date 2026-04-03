@@ -102,6 +102,13 @@ export function userRoutes(rawApp: any) {
         const data = await stub.getMe(token);
         return c.json({ success: !!data, data });
     });
+    app.get('/api/auth/entra/mock', async (c) => {
+        const stub = getStub(c);
+        // Simulate a successful SSO login using the global admin account
+        const data = await stub.login('admin@mercury.com');
+        if (!data) return c.json({ success: false, error: 'SSO Simulation Failed' }, 500);
+        return c.json({ success: true, data });
+    });
     app.put('/api/presence', async (c) => {
         const { status } = await c.req.json<{ status: PresenceStatus }>();
         const token = getAuthToken(c);
@@ -160,6 +167,14 @@ export function userRoutes(rawApp: any) {
         const admins = await stub.getUsers(tenantId, 'tenant_admin');
         return c.json({ success: true, data: [...data, ...admins] });
     });
+    app.post('/api/admin/agents/invite', enforceTenantContext, async (c) => {
+        const tenantId = c.req.header('X-Tenant-ID');
+        if (!tenantId) return c.json({ success: false, error: 'Tenant context required' }, 400);
+        const { email, name } = await c.req.json();
+        const stub = getStub(c);
+        const data = await stub.upsertUser({ email, name, role: 'agent', tenantId });
+        return c.json({ success: true, data });
+    });
     app.get('/api/internal/offline', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
         if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
@@ -217,6 +232,15 @@ export function userRoutes(rawApp: any) {
         const data = await stub.upsertUser(body);
         return c.json({ success: true, data });
     });
+    app.delete('/api/superadmin/users/:id', async (c) => {
+        const id = c.req.param('id');
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const me = await stub.getMe(token);
+        if (me?.user.role !== 'superadmin') return c.json({ success: false, error: 'Forbidden' }, 403);
+        const ok = await stub.deleteUser(id);
+        return c.json({ success: ok });
+    });
     app.get('/api/admin/stats', async (c) => {
         const stub = getStub(c);
         const data = await stub.getGlobalMetrics();
@@ -233,9 +257,9 @@ export function userRoutes(rawApp: any) {
         const isProd = c.req.query('prod') === 'true';
         const stub = getStub(c);
         const seeded = await stub.seedDatabase(isProd);
-        return c.json({ 
-            success: true, 
-            data: seeded ? "Database reset/initialized" : "Database already has data; production safety check prevented wipe" 
+        return c.json({
+            success: true,
+            data: seeded ? "Database reset/initialized" : "Database already has data; production safety check prevented wipe"
         });
     });
     app.post('/api/auth/local/login', async (c) => {

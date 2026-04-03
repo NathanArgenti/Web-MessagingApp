@@ -85,10 +85,11 @@ export function SuperAdmin() {
   });
   const deleteUserMutation = useMutation({
     mutationFn: async (id: string) => {
-      await fetch(`/api/superadmin/users/${id}`, {
+      const res = await fetch(`/api/superadmin/users/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (!res.ok) throw new Error('Delete failed');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['superadmin', 'users'] });

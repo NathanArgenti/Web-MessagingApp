@@ -47,14 +47,16 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
   const handleLogout = () => {
     clearAuth();
+    setActiveConversationId(null);
     navigate('/login');
   };
   const handleTenantSwitch = (id: string) => {
     setSelectedTenantId(id);
+    setActiveConversationId(null);
     // Hard refresh/invalidate for tenant-scoped data
     queryClient.invalidateQueries();
   };
-  const currentTenantName = availableTenants.find(t => t.id === selectedTenantId)?.name || tenantName || 'Mercury';
+  const currentTenantName = availableTenants?.find(t => t.id === selectedTenantId)?.name || tenantName || 'Mercury Platform';
   const navItems = [
     { label: 'Agent Console', icon: LayoutDashboard, path: '/agent', roles: ['agent', 'tenant_admin'] },
     { label: 'Platform Oversight', icon: ShieldCheck, path: '/superadmin', roles: ['superadmin'] },
