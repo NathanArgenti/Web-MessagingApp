@@ -14,6 +14,7 @@ import { AgentDashboard } from '@/pages/AgentDashboard';
 import { TenantAdmin } from '@/pages/TenantAdmin';
 import { WPIntegration } from '@/pages/WPIntegration';
 import { SuperAdmin } from '@/pages/SuperAdmin';
+import { WidgetFrame } from '@/pages/WidgetFrame';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { Toaster } from 'sonner';
 const queryClient = new QueryClient({
@@ -27,6 +28,7 @@ const queryClient = new QueryClient({
 const router = createBrowserRouter([
   { path: "/", element: <HomePage />, errorElement: <RouteErrorBoundary /> },
   { path: "/login", element: <LoginPage />, errorElement: <RouteErrorBoundary /> },
+  { path: "/widget-frame", element: <WidgetFrame />, errorElement: <RouteErrorBoundary /> },
   {
     path: "/agent",
     element: (

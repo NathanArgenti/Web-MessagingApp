@@ -1,16 +1,22 @@
 import React from 'react'
-import { MessageCircle, Globe, Zap, Database } from 'lucide-react'
+import { MessageCircle, Globe, Zap, Database, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Toaster, toast } from 'sonner'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import ChatWidget from '@/components/widget/ChatWidget';
 export function HomePage() {
+  const [searchParams] = useSearchParams();
+  const isProdSetup = searchParams.get('prod') === '1';
   const seedDatabase = async () => {
     try {
-      const res = await fetch('/api/seed', { method: 'POST' });
-      if (res.ok) toast.success('Database seeded with demo tenants and users');
+      const url = isProdSetup ? '/api/seed?prod=true' : '/api/seed';
+      const res = await fetch(url, { method: 'POST' });
+      const json = await res.json();
+      if (res.ok) {
+        toast.success(json.data || 'Platform initialized');
+      }
     } catch (e) {
-      toast.error('Failed to seed');
+      toast.error('Failed to initialize platform');
     }
   };
   return (
@@ -21,11 +27,11 @@ export function HomePage() {
           <span className="text-xl font-bold text-slate-900">Mercury</span>
         </div>
         <div className="flex gap-4">
-          <Button variant="ghost" onClick={seedDatabase} className="hidden sm:flex gap-2">
-            <Database className="w-4 h-4" />
-            Seed Demo
+          <Button variant="ghost" onClick={seedDatabase} className="flex gap-2">
+            {isProdSetup ? <ShieldCheck className="w-4 h-4 text-emerald-600" /> : <Database className="w-4 h-4" />}
+            {isProdSetup ? 'Initialize Production' : 'Seed Demo'}
           </Button>
-          <Link to="/login">
+          <Link to={isProdSetup ? "/login?prod=1" : "/login"}>
             <Button variant="outline">Sign In</Button>
           </Link>
         </div>
@@ -69,7 +75,7 @@ export function HomePage() {
           <div className="relative z-10 max-w-2xl space-y-6">
             <h2 className="text-4xl font-bold">One Line of Code.</h2>
             <p className="text-slate-400 text-lg">
-              Embed our widget on any site using just a site key. We handle the routing, 
+              Embed our widget on any site using just a site key. We handle the routing,
               the persistence, and the real-time sync.
             </p>
             <div className="bg-slate-800 rounded-xl p-4 font-mono text-sm text-cyan-400 border border-slate-700">

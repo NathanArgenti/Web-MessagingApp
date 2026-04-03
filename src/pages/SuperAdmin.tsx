@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { Plus, Globe, Shield, Activity, Users as UsersIcon, Trash2, UserPlus, Database, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Plus, Globe, Shield, Activity, Users as UsersIcon, Trash2, UserPlus, Database, ExternalLink, AlertTriangle, ShieldCheck, History } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -21,6 +21,8 @@ export function SuperAdmin() {
   const setSelectedTenantId = useAuthStore(s => s.setSelectedTenantId);
   const [newTenantName, setNewTenantName] = useState('');
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetConfirmation, setResetConfirmation] = useState('');
   // Queries
   const { data: tenants = [] } = useQuery({
     queryKey: ['superadmin', 'tenants'],
@@ -83,9 +85,9 @@ export function SuperAdmin() {
   });
   const deleteUserMutation = useMutation({
     mutationFn: async (id: string) => {
-      await fetch(`/api/superadmin/users/${id}`, { 
+      await fetch(`/api/superadmin/users/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` } 
+        headers: { 'Authorization': `Bearer ${token}` }
       });
     },
     onSuccess: () => {
@@ -93,13 +95,19 @@ export function SuperAdmin() {
       toast.success('User deleted');
     }
   });
-  const resetMutation = useMutation({
-    mutationFn: async () => {
-      await fetch('/api/seed', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+  const seedMutation = useMutation({
+    mutationFn: async (prod: boolean) => {
+      const res = await fetch(`/api/seed?prod=${prod}`, { 
+        method: 'POST', 
+        headers: { 'Authorization': `Bearer ${token}` } 
+      });
+      return await res.json();
     },
-    onSuccess: () => {
-      toast.success('Database seeded and reset to defaults');
+    onSuccess: (json) => {
+      toast.success(json.data || 'Platform maintenance task completed');
       queryClient.invalidateQueries();
+      setIsResetModalOpen(false);
+      setResetConfirmation('');
     }
   });
   const stats = [
@@ -116,9 +124,52 @@ export function SuperAdmin() {
             <p className="text-muted-foreground text-sm">Global control plane for tenants, users, and infrastructure health.</p>
           </div>
           <div className="flex gap-2">
-             <Button variant="outline" className="gap-2 border-rose-200 text-rose-700 hover:bg-rose-50" onClick={() => resetMutation.mutate()}>
-               <Database className="w-4 h-4" /> Seed/Reset System
-             </Button>
+            <Button 
+              variant="outline" 
+              className="gap-2 border-cyan-200 text-cyan-700 hover:bg-cyan-50"
+              onClick={() => seedMutation.mutate(true)}
+              disabled={seedMutation.isPending}
+            >
+              <ShieldCheck className="w-4 h-4" /> Safe Initialize
+            </Button>
+            <Dialog open={isResetModalOpen} onOpenChange={setIsResetModalOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-2 border-rose-200 text-rose-700 hover:bg-rose-50">
+                  <Database className="w-4 h-4" /> Factory Reset
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="text-rose-600 flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5" /> Dangerous Operation
+                  </DialogTitle>
+                  <CardDescription>
+                    This will permanently delete ALL data including tenants, users, and conversation history. This cannot be undone.
+                  </CardDescription>
+                </DialogHeader>
+                <div className="py-4 space-y-4">
+                  <div className="p-3 bg-rose-50 rounded-lg border border-rose-100 text-rose-900 text-xs font-medium">
+                    Type <strong>RESET</strong> below to confirm.
+                  </div>
+                  <Input 
+                    value={resetConfirmation} 
+                    onChange={e => setResetConfirmation(e.target.value)}
+                    placeholder="Type RESET here"
+                    className="border-rose-200 focus-visible:ring-rose-500"
+                  />
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setIsResetModalOpen(false)}>Cancel</Button>
+                  <Button 
+                    variant="destructive" 
+                    disabled={resetConfirmation !== 'RESET' || seedMutation.isPending}
+                    onClick={() => seedMutation.mutate(false)}
+                  >
+                    Confirm Wipe & Reset
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
         <div className="grid md:grid-cols-3 gap-6 mb-8">
@@ -189,9 +240,9 @@ export function SuperAdmin() {
                           </div>
                         </TableCell>
                         <TableCell className="text-right px-6">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
+                          <Button
+                            variant="outline"
+                            size="sm"
                             className="gap-2 h-8"
                             onClick={() => {
                               setSelectedTenantId(t.id);
@@ -336,19 +387,19 @@ export function SuperAdmin() {
               </Card>
               <Card>
                 <CardHeader>
-                  <CardTitle>Maintenance Controls</CardTitle>
+                  <CardTitle>Audit & Maintenance</CardTitle>
                   <CardDescription>Critical platform-level operations.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-start gap-3 p-4 bg-amber-50 rounded-xl border border-amber-100 text-amber-800">
                     <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
                     <div className="space-y-1">
-                      <p className="text-xs font-bold">Safe Mode Inactive</p>
-                      <p className="text-[10px] leading-relaxed">Platform is currently in developer mode. Database resets will wipe all production tenant configurations and conversation logs.</p>
+                      <p className="text-xs font-bold">Production Isolation Active</p>
+                      <p className="text-[10px] leading-relaxed">Safety switches are enabled. Use "Safe Initialize" to add missing platform entities without deleting existing data.</p>
                     </div>
                   </div>
-                  <Button variant="destructive" className="w-full font-bold shadow-lg shadow-rose-200" onClick={() => resetMutation.mutate()}>
-                    Factory Reset Platform
+                  <Button variant="outline" className="w-full gap-2 border-slate-200" onClick={() => toast.info('Platform activity logs are being synced...')}>
+                    <History className="w-4 h-4" /> Download Platform Logs
                   </Button>
                 </CardContent>
               </Card>

@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics, SystemMetrics } from '@shared/types';
-
 export function userRoutes(rawApp: any) {
     const app = rawApp as Hono;
     const getAuthToken = (c: any) => c.req.header('Authorization')?.split(' ')[1] || '';
@@ -20,6 +19,50 @@ export function userRoutes(rawApp: any) {
         }
         return await next();
     };
+    // WIDGET LOADER SCRIPT
+    app.get('/widget.js', (c) => {
+        const url = new URL(c.req.url);
+        const siteKey = url.searchParams.get('siteKey') || '';
+        const origin = url.origin;
+        const script = `
+        (function() {
+            var siteKey = "${siteKey}" || (function() {
+                var scripts = document.getElementsByTagName('script');
+                for (var i = 0; i < scripts.length; i++) {
+                    if (scripts[i].src.indexOf('widget.js') !== -1) {
+                        var url = new URL(scripts[i].src);
+                        return url.searchParams.get('siteKey');
+                    }
+                }
+                return '';
+            })();
+            if (!siteKey) {
+                console.error('Mercury Messaging: Missing siteKey in widget script.');
+                return;
+            }
+            var container = document.createElement('div');
+            container.id = 'mercury-widget-root';
+            container.style.position = 'fixed';
+            container.style.bottom = '0';
+            container.style.right = '0';
+            container.style.zIndex = '999999';
+            container.style.width = '400px';
+            container.style.height = '600px';
+            container.style.pointerEvents = 'none';
+            document.body.appendChild(container);
+            var iframe = document.createElement('iframe');
+            iframe.src = "${origin}/widget-frame?siteKey=" + siteKey;
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            iframe.style.background = 'transparent';
+            iframe.style.pointerEvents = 'all';
+            iframe.setAttribute('allow', 'clipboard-read; clipboard-write');
+            container.appendChild(iframe);
+        })();
+        `;
+        return c.text(script, 200, { 'Content-Type': 'application/javascript' });
+    });
     // PUBLIC ENDPOINTS
     app.get('/api/public/config/:siteKey', async (c) => {
         const siteKey = c.req.param('siteKey');
@@ -132,7 +175,6 @@ export function userRoutes(rawApp: any) {
         const ok = await stub.dispatchOfflineRequest(tenantId, id);
         return c.json({ success: ok });
     });
-
     app.put('/api/admin/settings', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
         if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
@@ -188,9 +230,13 @@ export function userRoutes(rawApp: any) {
         return c.json({ success: true, data });
     });
     app.post('/api/seed', async (c) => {
+        const isProd = c.req.query('prod') === 'true';
         const stub = getStub(c);
-        await stub.seedDatabase();
-        return c.json({ success: true, data: "Database reset to defaults" });
+        const seeded = await stub.seedDatabase(isProd);
+        return c.json({ 
+            success: true, 
+            data: seeded ? "Database reset/initialized" : "Database already has data; production safety check prevented wipe" 
+        });
     });
     app.post('/api/auth/local/login', async (c) => {
         const { email } = await c.req.json();

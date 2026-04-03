@@ -5,7 +5,6 @@ import type {
     OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite,
     UserCreateInput, UserUpdateInput, QueueStatus, AuthPayload
 } from '@shared/types';
-
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
         return await this.ctx.storage.get<T>(key);
@@ -13,8 +12,30 @@ export class GlobalDurableObject extends DurableObject {
     private async setStorage<T>(key: string, value: T): Promise<void> {
         await this.ctx.storage.put(key, value);
     }
-    async seedDatabase(): Promise<boolean> {
-        await this.ctx.storage.deleteAll();
+    async seedDatabase(isProd: boolean = false): Promise<boolean> {
+        const existingTenants = await this.getStorage<Tenant[]>('tenants');
+        // If production mode and data already exists, don't wipe - just ensure admin exists
+        if (isProd && existingTenants && existingTenants.length > 0) {
+            const users = (await this.getStorage<User[]>('users')) || [];
+            if (!users.some(u => u.email === 'admin@mercury.com')) {
+                users.push({
+                    id: 'u-super-prod',
+                    email: 'admin@mercury.com',
+                    name: 'Mercury Global Admin',
+                    role: 'superadmin',
+                    isOnline: false,
+                    presenceStatus: 'offline',
+                    isActive: true,
+                    createdAt: Date.now()
+                });
+                await this.setStorage('users', users);
+            }
+            return false;
+        }
+        // In dev mode or empty prod, we can perform a full reset
+        if (!isProd) {
+            await this.ctx.storage.deleteAll();
+        }
         const queues: Queue[] = [
             { id: 'q1', tenantId: 't1', name: 'General Support', priority: 10, capacityMax: 10, isDeleted: false, assignedAgentIds: ['u3'] },
             { id: 'q2', tenantId: 't1', name: 'Sales Flow', priority: 5, capacityMax: 5, isDeleted: false, assignedAgentIds: [] }
@@ -36,9 +57,9 @@ export class GlobalDurableObject extends DurableObject {
             }
         ];
         const users: User[] = [
-            { id: 'u1', email: 'admin@mercury.com', name: 'Mercury Global Admin', role: 'superadmin', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() },
-            { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Tenant Admin', role: 'tenant_admin', tenantId: 't1', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() },
-            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Support Agent', role: 'agent', tenantId: 't1', isOnline: true, presenceStatus: 'online', isActive: true, createdAt: Date.now() }
+            { id: 'u1', email: 'admin@mercury.com', name: 'Mercury Global Admin', role: 'superadmin', isOnline: false, presenceStatus: 'offline', isActive: true, createdAt: Date.now() },
+            { id: 'u2', email: 'acme_admin@acme.com', name: 'Acme Tenant Admin', role: 'tenant_admin', tenantId: 't1', isOnline: false, presenceStatus: 'offline', isActive: true, createdAt: Date.now() },
+            { id: 'u3', email: 'agent1@acme.com', name: 'Acme Support Agent', role: 'agent', tenantId: 't1', isOnline: false, presenceStatus: 'offline', isActive: true, createdAt: Date.now() }
         ];
         await this.setStorage('tenants', tenants);
         await this.setStorage('users', users);
@@ -267,7 +288,6 @@ export class GlobalDurableObject extends DurableObject {
             }
         }
         if (!targetQueue) return { available: false, agentsOnline: 0, capacityUsed: 0, capacityMax: 10, isFull: true };
-
         const users = (await this.getStorage<User[]>('users')) || [];
         const onlineAgents = users.filter(u => u.isOnline && u.tenantId === tenantId && targetQueue!.assignedAgentIds?.includes(u.id));
         const convs = await this.getConversations(tenantId);
