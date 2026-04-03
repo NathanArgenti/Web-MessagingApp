@@ -188,6 +188,13 @@ export class GlobalDurableObject extends DurableObject {
         const updatedUsers = users.map(u => u.id === userId ? { ...u, presenceStatus: status, isOnline: status !== 'offline' } : u);
         await this.setStorage('users', updatedUsers);
     }
+
+    async getQueues(tenantId: string): Promise<Queue[]> {
+        const tenants = await this.getAllTenants();
+        const tenant = tenants.find(t => t.id === tenantId);
+        return tenant?.queues || [];
+    }
+
     // --- WORKFLOW ENGINE ---
     private async emitEvent(tenantId: string, type: EventType, payload: Record<string, any>): Promise<void> {
         const tenants = await this.getAllTenants();

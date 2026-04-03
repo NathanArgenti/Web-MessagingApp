@@ -164,6 +164,13 @@ export function userRoutes(rawApp: any) {
         await stub.leaveQueue(me.user.id, queueId);
         return c.json({ success: true });
     });
+
+    app.get('/api/queues', enforceTenantContext, async (c) => {
+        const tenantId = c.req.header('X-Tenant-ID')!;
+        const stub = getStub(c);
+        const data = await stub.getQueues(tenantId);
+        return c.json({ success: true, data });
+    });
     // MESSAGES
     app.get('/api/conversations/:id/messages', async (c) => {
         const id = c.req.param('id');

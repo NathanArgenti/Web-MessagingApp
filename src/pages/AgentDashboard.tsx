@@ -11,13 +11,15 @@ import { Switch } from '@/components/ui/switch';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 import { useChat } from '@/hooks/use-chat';
-import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics } from '@shared/types';
+import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics, Queue } from '@shared/types';
 import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { ChartContainer } from '@/components/ui/chart';
 import { toast } from 'sonner';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { motion, AnimatePresence } from 'framer-motion';
 export function AgentDashboard() {
   const token = useAuthStore(s => s.token);
@@ -96,6 +98,23 @@ export function AgentDashboard() {
     },
     enabled: !!token && !!effectiveTenantId,
   });
+
+  const { data: queues = [], isLoading: isLoadingQueues } = useQuery({
+    queryKey: ['queues', effectiveTenantId],
+    queryFn: async () => {
+      if (!token || !effectiveTenantId) return [];
+      const res = await fetch('/api/queues', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': effectiveTenantId,
+          'Content-Type': 'application/json'
+        }
+      });
+      const json = await res.json() as ApiResponse<Queue[]>;
+      return json.data ?? [];
+    },
+    enabled: !!token && !!effectiveTenantId,
+  });
   const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
   const presenceMutation = useMutation({
     mutationFn: async (status: PresenceStatus) => {
@@ -135,7 +154,8 @@ export function AgentDashboard() {
       return json;
     },
     onSuccess: () => {
-      toast.success("Queue list updated");
+      toast.success('Queue membership updated');
+      queryClient.invalidateQueries({ queryKey: ['queues', effectiveTenantId] });
       refreshMe();
     },
     onError: (err: Error) => toast.error(err.message)
@@ -214,6 +234,33 @@ export function AgentDashboard() {
                     </CardHeader>
                     <ScrollArea className="flex-1">
                       <div className="p-4 space-y-6">
+                        {isLoadingQueues ? (
+                          <div className="p-4 flex items-center gap-2 text-xs text-muted-foreground">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Loading queues...
+                          </div>
+                        ) : (
+                          <div className="space-y-3 pb-6 border-b border-slate-200 mx-4 mt-4">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                              Queue Membership ({queues.filter((q: any) => !q.isDeleted && q.assignedAgentIds?.includes(userId || '')).length})
+                            </p>
+                            {queues.filter((q: any) => !q.isDeleted).map((q: any) => (
+                              <div key={q.id} className="group flex items-center space-x-3 p-3 rounded-xl border cursor-pointer hover:bg-accent hover:shadow-sm transition-all">
+                                <Checkbox
+                                  id={`queue-${q.id}`}
+                                  checked={q.assignedAgentIds?.includes(userId || '')}
+                                  onCheckedChange={(checked) => membershipMutation.mutate({ queueId: q.id, action: checked ? 'join' : 'leave' })}
+                                />
+                                <Label htmlFor={`queue-${q.id}`} className="text-sm font-medium cursor-pointer flex-1">
+                                  {q.name}
+                                </Label>
+                                <div className="text-[10px] text-muted-foreground hidden md:block">
+                                  {q.priority}p /{q.capacityMax}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div className="space-y-2">
                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">My Batch ({myChats.length})</p>
                           <AnimatePresence mode="popLayout">
@@ -377,7 +424,13 @@ export function AgentDashboard() {
                               onClick={() => dispatchMutation.mutate(r.id)}
                               disabled={r.status !== 'pending' || dispatchMutation.isPending}
                             >
-                              {dispatchMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : r.status === 'pending' ? 'Dispatch' : <Check className="w-4 h-4" />}
+                              {dispatchMutation.isPending && dispatchMutation.variables === r.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : r.status === 'pending' ? (
+                                'Dispatch'
+                              ) : (
+                                <Check className="w-4 h-4" />
+                              )}
                             </Button>
                           </TableCell>
                         </TableRow>

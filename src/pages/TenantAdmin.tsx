@@ -17,11 +17,30 @@ import { Save, Plus, Trash2, Globe, Shield, Monitor, ListFilter, Users as UsersI
 import { Queue, TenantSite, ApiResponse, User } from '@shared/types';
 import { nanoid } from 'nanoid';
 import { cn } from "@/lib/utils";
+import { useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 export function TenantAdmin() {
   const queryClient = useQueryClient();
-  const tenant = useAuthStore(s => s.tenant);
   const token = useAuthStore(s => s.token);
+  const refreshMe = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const json = await res.json() as ApiResponse<{user: any, tenant: any, availableTenants: any[]}>;
+
+      if (json.success && json.data) {
+        useAuthStore.getState().setAuth(json.data.user, token, json.data.tenant, json.data.availableTenants);
+      }
+    } catch (e) {
+      console.error('Failed to refresh identity context', e);
+    }
+  }, [token]);
+
+  const tenant = useAuthStore(s => s.tenant);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
   const [primaryColor, setPrimaryColor] = useState(tenant?.branding.primaryColor || '#06B6D4');
   const [welcomeMessage, setWelcomeMessage] = useState(tenant?.branding.welcomeMessage || '');
@@ -81,6 +100,7 @@ export function TenantAdmin() {
       if (res.ok) {
         toast.success('Tenant settings synchronized');
         queryClient.invalidateQueries();
+        refreshMe();
       } else toast.error('Failed to synchronize context');
     } catch (e) {
       toast.error('Network error during synchronization');
