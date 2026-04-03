@@ -1,6 +1,6 @@
 # Cloudflare Workers React Template
 
-[![Deploy to Cloudflare][cloudflarebutton]]
+[![Deploy to Cloudflare][![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/NathanArgenti/Web-MessagingApp)]
 
 A production-ready full-stack template for Cloudflare Workers featuring a React frontend with shadcn/ui, Tailwind CSS, Hono backend with Durable Objects, Tanstack Query, and TypeScript end-to-end.
 
@@ -90,7 +90,7 @@ Assets built to `dist/`, Worker to `worker/`.
 
    Or use the one-click deploy:
 
-   [![Deploy to Cloudflare][cloudflarebutton]]
+   [![Deploy to Cloudflare][![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/NathanArgenti/Web-MessagingApp)]
 
 Durable Objects are auto-migrated. View logs/metrics in Cloudflare dashboard.
 
