@@ -14,16 +14,14 @@ export function useChat(conversationId: string | null) {
     queryFn: async () => {
       if (!conversationId) return [];
       try {
-        const headers: Record<string, string> = {};
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
-        const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-          headers
-        });
+        const res = await fetch(`/api/conversations/${conversationId}/messages`, { headers });
         const json = await res.json() as ApiResponse<Message[]>;
         return json.data ?? [];
       } catch (e) {
-        console.error('[CHAT ERROR]', e);
+        console.error('[AGENT CHIP POLL ERROR]', e);
         return [];
       }
     },
@@ -32,7 +30,7 @@ export function useChat(conversationId: string | null) {
   });
   const sendMutation = useMutation({
     mutationFn: async (content: string) => {
-      if (!conversationId) throw new Error('No active conversation');
+      if (!conversationId) throw new Error('Session inactive');
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
@@ -42,17 +40,17 @@ export function useChat(conversationId: string | null) {
         body: JSON.stringify({ content }),
       });
       const json = await res.json() as ApiResponse<Message>;
-      if (!json.success) throw new Error(json.error);
+      if (!json.success) throw new Error(json.error || "Failed to deliver message");
       return json.data!;
     },
     onSuccess: (newMessage) => {
       queryClient.setQueryData(['messages', conversationId], (old: Message[] = []) => [...old, newMessage]);
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: Error) => toast.error(err.message),
   });
   const claimMutation = useMutation({
     mutationFn: async (id: string) => {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
       const res = await fetch(`/api/conversations/${id}/claim`, {
@@ -60,18 +58,18 @@ export function useChat(conversationId: string | null) {
         headers
       });
       const json = await res.json() as ApiResponse<Conversation>;
-      if (!json.success) throw new Error(json.error);
+      if (!json.success) throw new Error(json.error || "Could not claim conversation");
       return json.data!;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
       toast.success('Conversation claimed');
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: Error) => toast.error(err.message),
   });
   const endMutation = useMutation({
     mutationFn: async (id: string) => {
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
       if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
       const res = await fetch(`/api/conversations/${id}/end`, {
@@ -79,17 +77,17 @@ export function useChat(conversationId: string | null) {
         headers
       });
       const json = await res.json() as ApiResponse<Conversation>;
-      if (!json.success) throw new Error(json.error);
+      if (!json.success) throw new Error(json.error || "End failed");
       return json.data!;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      toast.success('Conversation closed');
+      queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
+      toast.success('Session closed');
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: Error) => toast.error(err.message),
   });
   return {
-    messages: messages ?? [],
+    messages,
     isLoading,
     sendMessage: sendMutation.mutate,
     isSending: sendMutation.isPending,

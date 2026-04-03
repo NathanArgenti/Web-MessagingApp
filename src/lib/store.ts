@@ -26,11 +26,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   activeConversationId: null,
   setAuth: (user, token, tenant, availableTenants = []) => {
     localStorage.setItem('mercury_token', token);
-    // Server typically filters this, but ensure consistency for local state
-    const filteredTenants = user.role === 'superadmin'
-      ? availableTenants
-      : availableTenants.filter(t => t.id === user.tenantId);
-    const initialTenantId = user.tenantId || (filteredTenants[0]?.id) || null;
+    // Always prioritize the user's hardcoded tenant assignment on login to ensure isolation
+    const initialTenantId = user.tenantId || (availableTenants[0]?.id) || null;
     if (initialTenantId) {
       localStorage.setItem('mercury_tenant_id', initialTenantId);
     }
@@ -38,7 +35,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       user,
       token,
       tenant: tenant || null,
-      availableTenants: filteredTenants,
+      availableTenants: availableTenants || [],
       selectedTenantId: initialTenantId,
       isAuthenticated: true,
       presenceStatus: user.presenceStatus || 'online'

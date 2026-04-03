@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics, SystemMetrics } from '../shared/types';
+import type { ApiResponse, Conversation, Message, PresenceStatus } from '../shared/types';
 export function userRoutes(rawApp: any) {
     const app = rawApp as Hono;
     const getAuthToken = (c: any) => c.req.header('Authorization')?.split(' ')[1] || '';
@@ -15,11 +15,16 @@ export function userRoutes(rawApp: any) {
         if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
         if (me.user.role === 'superadmin') return await next();
         if (!targetTenantId || me.user.tenantId !== targetTenantId) {
-            console.error(`[SECURITY] Tenant mismatch for user ${me.user.id}. Header: ${targetTenantId}, User: ${me.user.tenantId}`);
+            console.warn(`[SECURITY VIOLATION] User ${me.user.id} (${me.user.email}) attempted to access Tenant ${targetTenantId} but belongs to Tenant ${me.user.tenantId}`);
             return c.json({ success: false, error: 'Access denied: Tenant isolation violation' }, 403);
         }
         return await next();
     };
+    // LOGGING WRAPPER
+    app.onError((err, c) => {
+        console.error(`[WORKER ERROR] ${c.req.method} ${c.req.path}: ${err.message}`, err.stack);
+        return c.json({ success: false, error: 'Internal server error' }, 500);
+    });
     // WIDGET LOADER SCRIPT
     app.get('/widget.js', (c) => {
         const url = new URL(c.req.url);
@@ -158,21 +163,23 @@ export function userRoutes(rawApp: any) {
         await stub.leaveQueue(me.user.id, queueId);
         return c.json({ success: true });
     });
-    // MESSAGES (HARDENED)
+    // MESSAGES
     app.get('/api/conversations/:id/messages', async (c) => {
         const id = c.req.param('id');
         const token = getAuthToken(c);
         const stub = getStub(c);
         const targetTenantId = c.req.header('X-Tenant-ID');
-        // Security: If internal user (token present), verify tenant context
+        const conv = await stub.getConversationById(id);
+        if (!conv) {
+            console.log(`[ROUTING] Message GET rejected: Conversation ${id} not found.`);
+            return c.json({ success: false, error: 'Conversation not found' }, 404);
+        }
         if (token) {
             const me = await stub.getMe(token);
             if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
-            if (me.user.role !== 'superadmin') {
-                const conv = await stub.getConversationById(id);
-                if (!conv || conv.tenantId !== me.user.tenantId) {
-                    return c.json({ success: false, error: 'Access denied: Conversation isolation' }, 403);
-                }
+            if (me.user.role !== 'superadmin' && me.user.tenantId !== conv.tenantId) {
+                console.warn(`[SECURITY] Agent ${me.user.id} tried to read messages for Conv ${id} belonging to Tenant ${conv.tenantId}`);
+                return c.json({ success: false, error: 'Access denied' }, 403);
             }
         }
         const data = await stub.getMessages(id);
@@ -183,18 +190,18 @@ export function userRoutes(rawApp: any) {
         const body = await c.req.json();
         const token = getAuthToken(c);
         const stub = getStub(c);
-        const targetTenantId = c.req.header('X-Tenant-ID');
+        const conv = await stub.getConversationById(id);
+        if (!conv) {
+            console.log(`[ROUTING] Message POST rejected: Conversation ${id} not found.`);
+            return c.json({ success: false, error: 'Conversation not found' }, 404);
+        }
         let message: Message;
-        let tenantId: string | undefined;
         if (token) {
             const me = await stub.getMe(token);
             if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
-            const conv = await stub.getConversationById(id);
-            if (!conv) return c.json({ success: false, error: 'Conversation not found' }, 404);
             if (me.user.role !== 'superadmin' && me.user.tenantId !== conv.tenantId) {
-                 return c.json({ success: false, error: 'Tenant context mismatch' }, 403);
+                return c.json({ success: false, error: 'Access denied' }, 403);
             }
-            tenantId = conv.tenantId;
             message = {
                 id: crypto.randomUUID(),
                 conversationId: id,
@@ -204,9 +211,6 @@ export function userRoutes(rawApp: any) {
                 timestamp: Date.now()
             };
         } else {
-            const conv = await stub.getConversationById(id);
-            if (!conv) return c.json({ success: false, error: 'Conversation not found' }, 404);
-            tenantId = conv.tenantId;
             message = {
                 id: crypto.randomUUID(),
                 conversationId: id,
@@ -216,7 +220,7 @@ export function userRoutes(rawApp: any) {
                 timestamp: Date.now()
             };
         }
-        const data = await stub.sendMessage(message, tenantId);
+        const data = await stub.sendMessage(message, conv.tenantId);
         return c.json({ success: true, data });
     });
     // ADMIN & INTERNAL

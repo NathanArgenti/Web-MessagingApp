@@ -21,22 +21,24 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const [showOfflineForm, setShowOfflineForm] = useState(false);
   const [offlineSubmitted, setOfflineSubmitted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const sessionRef = useRef(session);
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const forceNew = params.get('newSession') === 'true';
+    if (forceNew) {
+      localStorage.removeItem(`mercury_session_${siteKey}`);
+      return;
+    }
     const saved = localStorage.getItem(`mercury_session_${siteKey}`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         setSession(parsed);
-        sessionRef.current = parsed;
       } catch (e) {
         console.error("Session parse error", e);
+        localStorage.removeItem(`mercury_session_${siteKey}`);
       }
     }
   }, [siteKey]);
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
   useEffect(() => {
     if (!siteKey) return;
     fetch(`/api/public/config/${siteKey}`)
@@ -54,34 +56,42 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     const pollStatus = () => {
       const qId = config.queues?.[0]?.id;
       if (!qId) return;
-      fetch(`/api/public/queue/${qId}/status?tenantId=${config.tenantId}`)
+      fetch(`/api/public/queue/${qId}/status`)
         .then(res => res.json())
         .then((json: ApiResponse<QueueStatus>) => {
           if (json.success) setStatus(json.data!);
         });
     };
     const interval = setInterval(pollStatus, 10000);
+    pollStatus();
     return () => clearInterval(interval);
   }, [config, isOpen, session]);
   useEffect(() => {
     if (!session?.convId || !isOpen) return;
     const controller = new AbortController();
     const poll = async () => {
-        try {
-            const res = await fetch(`/api/conversations/${session.convId}/messages`, {
-                signal: controller.signal
-            });
-            const json = await res.json() as ApiResponse<Message[]>;
-            if (json.success) setMessages(json.data ?? []);
-        } catch (err: any) {
-            if (err.name !== 'AbortError') console.error("Poll messages error", err);
+      try {
+        const res = await fetch(`/api/conversations/${session.convId}/messages`, {
+          signal: controller.signal
+        });
+        if (res.status === 404 || res.status === 403) {
+          console.warn("Session invalid or conversation ended, clearing local state");
+          clearChat();
+          return;
         }
+        const json = await res.json() as ApiResponse<Message[]>;
+        if (json.success) {
+          setMessages(json.data ?? []);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') console.error("Poll messages error", err);
+      }
     };
     const interval = setInterval(poll, 4000);
-    poll(); // Initial poll
+    poll();
     return () => {
-        clearInterval(interval);
-        controller.abort();
+      clearInterval(interval);
+      controller.abort();
     };
   }, [session?.convId, isOpen]);
   useEffect(() => {
@@ -91,7 +101,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     if (!config) return;
     setIsStarting(true);
     try {
-      const visitorId = crypto.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).substr(2);
+      const visitorId = crypto.randomUUID?.() || Math.random().toString(36).substring(2);
       const res = await fetch('/api/public/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -107,7 +117,11 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
         setSession(newSession);
         setMessages([]);
         localStorage.setItem(`mercury_session_${siteKey}`, JSON.stringify(newSession));
+      } else {
+        toast.error(json.error || "Could not start chat");
       }
+    } catch (e) {
+      toast.error("Connection failed");
     } finally {
       setIsStarting(false);
     }
@@ -122,22 +136,18 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || !session) return;
-    
-    const tempId = `temp-${Date.now()}`;
-    const optimisticMessage: Message = {
+    const content = input.trim();
+    const tempId = `optimistic-${Date.now()}`;
+    const optimisticMsg: Message = {
       id: tempId,
-      content: input,
-      senderType: 'visitor' as const,
-      senderId: session!.visitorId,
-      timestamp: Date.now(),
-      conversationId: session!.convId,
+      conversationId: session.convId,
+      senderId: session.visitorId,
+      senderType: 'visitor',
+      content,
+      timestamp: Date.now()
     };
-    
-    // Optimistic update
-    setMessages(prev => [...prev, optimisticMessage]);
-    const content = input;
+    setMessages(prev => [...prev, optimisticMsg]);
     setInput('');
-    
     try {
       const res = await fetch(`/api/conversations/${session.convId}/messages`, {
         method: 'POST',
@@ -146,15 +156,13 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
       });
       const json = await res.json() as ApiResponse<Message>;
       if (!json.success) {
-        throw new Error('Server rejected message');
+        throw new Error(json.error || "Failed to send");
       }
-      // Keep optimistic message (poll will sync real message later)
-    } catch (err) {
-      // Remove optimistic message and restore input on failure
+      // Poll will reconcile real ID
+    } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== tempId));
       setInput(content);
-      toast.error('Failed to send');
-      console.error("Send error", err);
+      toast.error(err.message || "Message failed to send. Please try again.");
     }
   };
   const handleOfflineSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
