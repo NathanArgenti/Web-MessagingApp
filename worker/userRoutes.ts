@@ -16,7 +16,8 @@ export function userRoutes(rawApp: any) {
         if (me.user.role === 'superadmin') return await next();
         if (!targetTenantId || me.user.tenantId !== targetTenantId) {
             console.warn(`[SECURITY VIOLATION] User ${me.user.id} (${me.user.email}) attempted to access Tenant ${targetTenantId} but belongs to Tenant ${me.user.tenantId}`);
-            return c.json({ success: false, error: 'Access denied: Tenant isolation violation' }, 403);
+            const msg = !targetTenantId ? 'Missing tenant context header' : 'Access denied: Tenant isolation violation';
+            return c.json({ success: false, error: msg }, 403);
         }
         return await next();
     };

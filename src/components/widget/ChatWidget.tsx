@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MessageCircle, X, Send, Loader2, Mail, CheckCircle2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +21,13 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const [showOfflineForm, setShowOfflineForm] = useState(false);
   const [offlineSubmitted, setOfflineSubmitted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const clearChat = useCallback(() => {
+    localStorage.removeItem(`mercury_session_${siteKey}`);
+    setSession(null);
+    setMessages([]);
+    setShowOfflineForm(false);
+    setOfflineSubmitted(false);
+  }, [siteKey]);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const forceNew = params.get('newSession') === 'true';
@@ -93,11 +100,11 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
       clearInterval(interval);
       controller.abort();
     };
-  }, [session?.convId, isOpen]);
+  }, [session?.convId, isOpen, clearChat]);
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-  const startChat = async () => {
+  const startChat = useCallback(async () => {
     if (!config) return;
     setIsStarting(true);
     try {
@@ -125,14 +132,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     } finally {
       setIsStarting(false);
     }
-  };
-  const clearChat = () => {
-    localStorage.removeItem(`mercury_session_${siteKey}`);
-    setSession(null);
-    setMessages([]);
-    setShowOfflineForm(false);
-    setOfflineSubmitted(false);
-  };
+  }, [config, siteKey]);
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || !session) return;
@@ -158,7 +158,6 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
       if (!json.success) {
         throw new Error(json.error || "Failed to send");
       }
-      // Poll will reconcile real ID
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== tempId));
       setInput(content);

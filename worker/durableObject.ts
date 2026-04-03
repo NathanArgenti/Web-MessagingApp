@@ -188,6 +188,30 @@ export class GlobalDurableObject extends DurableObject {
         const updatedUsers = users.map(u => u.id === userId ? { ...u, presenceStatus: status, isOnline: status !== 'offline' } : u);
         await this.setStorage('users', updatedUsers);
     }
+    // --- WORKFLOW ENGINE ---
+    private async emitEvent(tenantId: string, type: EventType, payload: Record<string, any>): Promise<void> {
+        const tenants = await this.getAllTenants();
+        const tenant = tenants.find(t => t.id === tenantId);
+        if (!tenant) return;
+
+        const matchedWorkflows = (tenant.workflows || []).filter(w => w.active && w.eventType === type);
+        if (matchedWorkflows.length === 0) return;
+
+        const event: SystemEvent = {
+            id: crypto.randomUUID(),
+            tenantId,
+            type,
+            payload,
+            timestamp: Date.now(),
+            processed: true // Simulation: marked as processed immediately
+        };
+
+        // Log workflow execution for observability
+        for (const workflow of matchedWorkflows) {
+            console.log(`[WORKFLOW ENGINE] Tenant ${tenantId} executing ${workflow.name} (${workflow.actionType}) for event ${type}`);
+            // Real implementation would dispatch webhooks/emails via this.ctx.storage.put to an outbox
+        }
+    }
     // --- CONVERSATION METHODS ---
     async getConversations(tenantId: string): Promise<Conversation[]> {
         return (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
@@ -223,6 +247,7 @@ export class GlobalDurableObject extends DurableObject {
         };
         convs.push(newConv);
         await this.setStorage(`tenant:${tenantId}:conversations`, convs);
+        await this.emitEvent(tenantId, 'conversation.started', { conversationId: newConv.id, contactName });
         return newConv;
     }
     async claimConversation(userId: string, conversationId: string): Promise<Conversation | null> {
@@ -239,6 +264,7 @@ export class GlobalDurableObject extends DurableObject {
             updatedAt: Date.now()
         };
         await this.setStorage(`tenant:${user.tenantId}:conversations`, convs);
+        await this.emitEvent(user.tenantId, 'agent.assigned', { conversationId, agentId: userId });
         return convs[idx];
     }
     async endConversation(conversationId: string): Promise<Conversation | null> {
@@ -248,6 +274,7 @@ export class GlobalDurableObject extends DurableObject {
             const idx = convs.findIndex(c => c.id === conversationId);
             if (idx !== -1) {
                 convs[idx] = { ...convs[idx], status: 'ended', updatedAt: Date.now() };
+                await this.emitEvent(tenant.id, 'conversation.ended', { conversationId });
                 await this.setStorage(`tenant:${tenant.id}:conversations`, convs);
                 return convs[idx];
             }

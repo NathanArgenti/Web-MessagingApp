@@ -12,12 +12,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 import { useChat } from '@/hooks/use-chat';
 import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics } from '@shared/types';
-import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check } from 'lucide-react';
+import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { ChartContainer } from '@/components/ui/chart';
 import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
 export function AgentDashboard() {
   const token = useAuthStore(s => s.token);
   const user = useAuthStore(s => s.user);
@@ -114,7 +115,6 @@ export function AgentDashboard() {
     onSuccess: () => {
       toast.success('Presence updated');
       queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
-      queryClient.invalidateQueries({ queryKey: ['metrics', effectiveTenantId] });
       refreshMe();
     },
     onError: (err: Error) => toast.error(err.message)
@@ -169,9 +169,9 @@ export function AgentDashboard() {
     sendMessage(msgInput);
     setMsgInput('');
   };
-  const myChats = conversations.filter(c => c.ownerId === userId && c.status === 'owned');
-  const unassigned = conversations.filter(c => c.status === 'unassigned');
-  const activeConv = conversations.find(c => c.id === activeId);
+  const myChats = (conversations ?? []).filter(c => c.ownerId === userId && c.status === 'owned');
+  const unassigned = (conversations ?? []).filter(c => c.status === 'unassigned');
+  const activeConv = (conversations ?? []).find(c => c.id === activeId);
   return (
     <MainLayout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -188,128 +188,148 @@ export function AgentDashboard() {
                 <TabsTrigger value="insights" className="gap-2"><BarChart3 className="w-4 h-4" /> Insights</TabsTrigger>
               </TabsList>
             </div>
-            <TabsContent value="live" className="mt-0">
-              <div className="h-[calc(100vh-18rem)] grid grid-cols-12 gap-6">
-                <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
-                  <Card className="shadow-sm flex flex-col h-fit">
+            <TabsContent value="live" className="mt-0 h-[calc(100vh-16rem)] min-h-[600px]">
+              <div className="h-full grid grid-cols-12 gap-6">
+                <div className="col-span-3 flex flex-col gap-4 h-full overflow-hidden">
+                  <Card className="shadow-sm flex flex-col h-fit shrink-0">
                     <CardHeader className="p-4 border-b bg-muted/50">
                       <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Agent Presence</CardTitle>
                     </CardHeader>
-                    <CardContent className="p-6 flex items-center justify-between gap-4">
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold capitalize">{presenceStatus ?? 'offline'}</p>
-                        <p className="text-xs text-muted-foreground">{isOnline ? 'Available' : 'Away'}</p>
+                    <CardContent className="p-4 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <p className="text-sm font-bold capitalize">{presenceStatus ?? 'offline'}</p>
+                        <p className="text-[10px] text-muted-foreground uppercase">{isOnline ? 'Available' : 'Away'}</p>
                       </div>
                       <Switch
                         id="presence"
                         checked={isOnline ?? false}
+                        disabled={presenceMutation.isPending}
                         onCheckedChange={(checked) => presenceMutation.mutate(checked ? 'online' : 'away')}
                       />
                     </CardContent>
                   </Card>
-                  <Card className="flex flex-col overflow-hidden shadow-sm">
-                    <CardHeader className="p-4 border-b bg-muted/50">
-                       <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">My Queues</CardTitle>
-                    </CardHeader>
-                    <ScrollArea className="flex-1 max-h-[160px]">
-                       <div className="p-4 space-y-3">
-                          {tenant?.queues?.filter(q => !q.isDeleted).map(q => (
-                            <div key={q.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-background border">
-                               <span className="text-xs font-medium truncate">{q.name}</span>
-                               <Switch
-                                 checked={q.assignedAgentIds?.includes(userId || '')}
-                                 onCheckedChange={(checked) => membershipMutation.mutate({ queueId: q.id, action: checked ? 'join' : 'leave' })}
-                               />
-                            </div>
-                          ))}
-                       </div>
-                    </ScrollArea>
-                  </Card>
-                  <Card className="flex flex-col flex-1 overflow-hidden shadow-sm">
-                    <CardHeader className="p-4 border-b bg-muted/50">
-                       <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Live Traffic</CardTitle>
+                  <Card className="flex flex-col flex-1 overflow-hidden shadow-soft">
+                    <CardHeader className="p-4 border-b bg-muted/50 shrink-0">
+                       <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Traffic Queues</CardTitle>
                     </CardHeader>
                     <ScrollArea className="flex-1">
                       <div className="p-4 space-y-6">
                         <div className="space-y-2">
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase">Personal Batch ({myChats.length})</p>
-                          {myChats.map(c => (
-                            <div key={c.id} onClick={() => setActiveId(c.id)} className={cn("p-3 rounded-xl cursor-pointer border transition-all text-sm", activeId === c.id ? "bg-accent text-accent-foreground border-primary shadow-sm" : "hover:bg-accent/50 bg-background")}>
-                              <div className="font-bold truncate">{c.contactName || 'Visitor'}</div>
-                              <div className="text-[10px] text-muted-foreground">{formatDistanceToNow(c.updatedAt, { addSuffix: true })}</div>
-                            </div>
-                          ))}
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">My Batch ({myChats.length})</p>
+                          <AnimatePresence mode="popLayout">
+                            {myChats.map(c => (
+                              <motion.div
+                                key={c.id}
+                                layout
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, scale: 0.95 }}
+                                onClick={() => setActiveId(c.id)}
+                                className={cn(
+                                  "p-3 rounded-xl cursor-pointer border transition-all text-sm",
+                                  activeId === c.id ? "bg-primary text-primary-foreground border-primary shadow-md" : "hover:bg-accent/50 bg-background"
+                                )}
+                              >
+                                <div className="font-bold truncate">{c.contactName || 'Visitor'}</div>
+                                <div className={cn("text-[10px] mt-1", activeId === c.id ? "text-primary-foreground/70" : "text-muted-foreground")}>
+                                  {formatDistanceToNow(c.updatedAt, { addSuffix: true })}
+                                </div>
+                              </motion.div>
+                            ))}
+                          </AnimatePresence>
+                          {myChats.length === 0 && <p className="text-[10px] italic text-muted-foreground p-2 text-center">No active chats</p>}
                         </div>
                         <div className="space-y-2 pt-4 border-t">
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase">Unassigned ({unassigned.length})</p>
-                          {unassigned.map(c => (
-                            <div key={c.id} className="p-3 rounded-xl border bg-background space-y-2 border-dashed">
-                              <div className="font-medium text-xs">{c.contactName || 'Visitor'}</div>
-                              <Button size="sm" variant="outline" className="w-full h-7 text-[10px]" onClick={() => claimConversation(c.id)}>Claim Session</Button>
-                            </div>
-                          ))}
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Unassigned ({unassigned.length})</p>
+                          <AnimatePresence mode="popLayout">
+                            {unassigned.map(c => (
+                              <motion.div
+                                key={c.id}
+                                layout
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                className="p-3 rounded-xl border bg-slate-50/50 space-y-2 border-dashed"
+                              >
+                                <div className="font-medium text-xs truncate">{c.contactName || 'Visitor'}</div>
+                                <Button size="sm" variant="outline" className="w-full h-7 text-[10px] font-bold uppercase bg-white" onClick={() => claimConversation(c.id)}>Claim Session</Button>
+                              </motion.div>
+                            ))}
+                          </AnimatePresence>
+                          {unassigned.length === 0 && <p className="text-[10px] italic text-muted-foreground p-2 text-center">Queues are clear</p>}
                         </div>
                       </div>
                     </ScrollArea>
                   </Card>
                 </div>
-                <Card className="col-span-6 flex flex-col overflow-hidden shadow-soft">
+                <Card className="col-span-6 flex flex-col overflow-hidden shadow-soft h-full relative">
                   {!activeId ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-12 text-center bg-muted/5">
-                       <div className="w-20 h-20 bg-background rounded-3xl shadow-sm border flex items-center justify-center mb-6"><MessageCircle className="w-10 h-10 text-muted/30" /></div>
-                       <h3 className="font-bold text-foreground text-lg">Waiting for Traffic</h3>
-                       <p className="text-sm max-w-[240px] mx-auto mt-2">Claim an unassigned chat or select one from your batch to begin responding.</p>
+                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-12 text-center bg-slate-50/30">
+                       <div className="w-20 h-20 bg-background rounded-3xl shadow-sm border flex items-center justify-center mb-6"><MessageCircle className="w-10 h-10 text-slate-200" /></div>
+                       <h3 className="font-bold text-foreground text-lg">Select a Session</h3>
+                       <p className="text-sm max-w-[240px] mx-auto mt-2">Claim a chat from the left panel to start a conversation with a visitor.</p>
                     </div>
                   ) : (
                     <>
-                      <div className="p-4 border-b bg-background flex justify-between items-center shadow-sm z-10">
+                      <div className="p-4 border-b bg-background flex justify-between items-center shadow-sm z-10 shrink-0">
                         <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-secondary border flex items-center justify-center text-secondary-foreground text-xs font-bold">{activeConv?.contactName?.[0] || 'V'}</div>
-                          <span className="font-bold text-foreground">{activeConv?.contactName}</span>
+                          <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary text-xs font-bold">{activeConv?.contactName?.[0] || 'V'}</div>
+                          <div className="flex flex-col">
+                            <span className="font-bold text-foreground leading-tight">{activeConv?.contactName}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">{activeConv?.status}</span>
+                          </div>
                         </div>
-                        <Button variant="ghost" size="sm" onClick={() => endConversation(activeId)} className="text-destructive hover:bg-destructive/10"><Power className="w-4 h-4 mr-2" /> Close Chat</Button>
+                        <Button variant="ghost" size="sm" onClick={() => endConversation(activeId)} className="text-destructive hover:bg-destructive/10 hover:text-destructive font-bold text-xs"><Power className="w-3 h-3 mr-2" /> Close Chat</Button>
                       </div>
-                      <ScrollArea className="flex-1 p-6 bg-background">
+                      <ScrollArea className="flex-1 p-6 bg-slate-50/20">
                         <div className="space-y-6">
                           {messages.map(m => (
-                            <div key={m.id} className={cn("flex flex-col max-w-[85%]", m.senderType === 'agent' ? "ml-auto items-end" : "mr-auto items-start")}>
-                              <div className={cn("px-4 py-2.5 rounded-2xl text-sm shadow-sm", m.senderType === 'agent' ? "bg-primary text-primary-foreground rounded-br-none" : "bg-muted border text-muted-foreground rounded-bl-none")}>
+                            <motion.div
+                              key={m.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className={cn("flex flex-col max-w-[85%]", m.senderType === 'agent' ? "ml-auto items-end" : "mr-auto items-start")}
+                            >
+                              <div className={cn(
+                                "px-4 py-2.5 rounded-2xl text-sm shadow-sm",
+                                m.senderType === 'agent' ? "bg-primary text-primary-foreground rounded-br-none" : "bg-white border text-foreground rounded-bl-none"
+                              )}>
                                 {m.content}
                               </div>
-                              <span className="text-[10px] text-muted-foreground mt-1.5 px-1">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
+                              <span className="text-[10px] text-muted-foreground mt-1.5 px-1 font-medium">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            </motion.div>
                           ))}
                           <div ref={scrollRef} />
                         </div>
                       </ScrollArea>
-                      <div className="p-4 border-t bg-secondary/30">
-                        <form onSubmit={handleSend} className="flex gap-2 bg-background p-1 rounded-xl border shadow-sm focus-within:ring-2 focus-within:ring-primary/20 transition-all">
-                          <Input placeholder="Compose message..." className="bg-transparent border-0 shadow-none focus-visible:ring-0" value={msgInput} onChange={(e) => setMsgInput(e.target.value)} />
-                          <Button type="submit" size="icon" className="shrink-0 h-10 w-10 rounded-lg" disabled={!msgInput.trim()}><Send className="w-4 h-4" /></Button>
+                      <div className="p-4 border-t bg-white shrink-0">
+                        <form onSubmit={handleSend} className="flex gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 focus-within:ring-2 focus-within:ring-primary/20 focus-within:bg-white transition-all">
+                          <Input placeholder="Type a message..." className="bg-transparent border-0 shadow-none focus-visible:ring-0 text-sm" value={msgInput} onChange={(e) => setMsgInput(e.target.value)} />
+                          <Button type="submit" size="icon" className="shrink-0 h-10 w-10 rounded-lg shadow-lg" disabled={!msgInput.trim()}><Send className="w-4 h-4" /></Button>
                         </form>
                       </div>
                     </>
                   )}
                 </Card>
-                <div className="col-span-3">
-                  <Card className="flex flex-col overflow-hidden shadow-sm">
+                <div className="col-span-3 flex flex-col gap-4">
+                  <Card className="flex flex-col overflow-hidden shadow-sm shrink-0">
                     <CardHeader className="p-4 border-b bg-muted/50">
                        <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Visitor Profile</CardTitle>
                     </CardHeader>
                     <CardContent className="p-6 text-center">
                       {activeConv ? (
                         <div className="space-y-6">
-                          <div className="w-20 h-20 bg-muted rounded-full mx-auto flex items-center justify-center border-4 border-background shadow-md"><UserIcon className="w-10 h-10 text-muted-foreground/30" /></div>
+                          <div className="w-20 h-20 bg-slate-100 rounded-full mx-auto flex items-center justify-center border-4 border-white shadow-xl"><UserIcon className="w-10 h-10 text-slate-300" /></div>
                           <div>
                             <h4 className="font-bold text-lg text-foreground">{activeConv.contactName || 'Visitor'}</h4>
-                            <p className="text-xs text-muted-foreground truncate px-2">{activeConv.contactEmail || 'No email verified'}</p>
+                            <p className="text-xs text-muted-foreground truncate px-2 font-mono">{activeConv.contactEmail || 'No email verified'}</p>
                           </div>
                           <div className="pt-6 border-t text-left space-y-4">
-                            <div><label className="text-[10px] font-bold text-muted-foreground uppercase">Started</label><p className="text-sm font-medium">{formatDistanceToNow(activeConv.createdAt)} ago</p></div>
+                            <div><label className="text-[10px] font-bold text-muted-foreground uppercase">Session Created</label><p className="text-sm font-medium">{formatDistanceToNow(activeConv.createdAt)} ago</p></div>
                           </div>
                         </div>
                       ) : (
-                        <div className="py-12 opacity-30 text-center"><UserIcon className="w-12 h-12 mx-auto text-muted-foreground" /><p className="text-[10px] mt-2 uppercase font-bold tracking-widest">Select a session</p></div>
+                        <div className="py-12 opacity-30 text-center"><UserIcon className="w-12 h-12 mx-auto text-muted-foreground" /><p className="text-[10px] mt-2 uppercase font-bold tracking-widest">Inactive</p></div>
                       )}
                     </CardContent>
                   </Card>
@@ -317,47 +337,47 @@ export function AgentDashboard() {
               </div>
             </TabsContent>
             <TabsContent value="inbox" className="mt-0">
-              <Card className="shadow-soft">
-                <CardHeader>
+              <Card className="shadow-soft border-none ring-1 ring-slate-200">
+                <CardHeader className="border-b">
                   <CardTitle>Offline Leads</CardTitle>
                   <CardDescription>Customer inquiries captured when the queue was unavailable.</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="p-0">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="bg-slate-50/50">
                       <TableRow>
-                        <TableHead>Visitor</TableHead>
+                        <TableHead className="px-6">Visitor</TableHead>
                         <TableHead>Subject</TableHead>
                         <TableHead>Received</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                        <TableHead className="text-right px-6">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {offlineRequests.length === 0 ? (
-                        <TableRow><TableCell colSpan={5} className="text-center py-12 text-muted-foreground italic">No offline requests found</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={5} className="text-center py-16 text-muted-foreground italic">No offline requests found</TableCell></TableRow>
                       ) : offlineRequests.map(r => (
                         <TableRow key={r.id}>
-                          <TableCell>
+                          <TableCell className="px-6">
                             <div className="font-bold">{r.visitorName}</div>
-                            <div className="text-xs text-muted-foreground">{r.visitorEmail}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{r.visitorEmail}</div>
                           </TableCell>
                           <TableCell className="max-w-xs truncate">{r.subject}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</TableCell>
                           <TableCell>
-                            <Badge variant={r.status === 'pending' ? 'outline' : 'secondary'}>
+                            <Badge variant={r.status === 'pending' ? 'outline' : 'secondary'} className={cn(r.status === 'pending' ? "text-amber-600 bg-amber-50 border-amber-100" : "bg-emerald-50 text-emerald-600 border-emerald-100")}>
                               {r.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right px-6">
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-8"
+                              className="h-8 rounded-lg font-bold text-xs"
                               onClick={() => dispatchMutation.mutate(r.id)}
                               disabled={r.status !== 'pending' || dispatchMutation.isPending}
                             >
-                              {r.status === 'pending' ? 'Dispatch' : <Check className="w-4 h-4" />}
+                              {dispatchMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : r.status === 'pending' ? 'Dispatch' : <Check className="w-4 h-4" />}
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -370,36 +390,36 @@ export function AgentDashboard() {
             <TabsContent value="insights" className="mt-0">
                <div className="grid md:grid-cols-4 gap-6 mb-8">
                   {[
-                    { label: 'Avg Response', value: `${metrics?.avgResponseTime ?? 0}s`, icon: Clock },
-                    { label: 'Success Rate', value: `${metrics?.resolutionRate ?? 0}%`, icon: MailCheck },
-                    { label: 'Live Agents', value: metrics?.activeAgents ?? 0, icon: UserIcon },
-                    { label: 'Total Convs', value: metrics?.totalConvs ?? 0, icon: MessageCircle },
+                    { label: 'Avg Response', value: `${metrics?.avgResponseTime ?? 0}s`, icon: Clock, color: "text-cyan-600" },
+                    { label: 'Success Rate', value: `${metrics?.resolutionRate ?? 0}%`, icon: MailCheck, color: "text-emerald-600" },
+                    { label: 'Live Agents', value: metrics?.activeAgents ?? 0, icon: UserIcon, color: "text-primary" },
+                    { label: 'Total Traffic', value: metrics?.totalConvs ?? 0, icon: MessageCircle, color: "text-slate-900" },
                   ].map(stat => (
-                    <Card key={stat.label} className="shadow-sm">
+                    <Card key={stat.label} className="shadow-sm border-none ring-1 ring-slate-200">
                       <CardContent className="pt-6">
                         <div className="flex justify-between items-start mb-2">
-                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{stat.label}</p>
-                           <stat.icon className="w-4 h-4 text-primary" />
+                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{stat.label}</p>
+                           <stat.icon className={cn("w-4 h-4", stat.color)} />
                         </div>
-                        <h3 className="text-3xl font-bold text-foreground">{stat.value}</h3>
+                        <h3 className="text-3xl font-black text-foreground tracking-tight">{stat.value}</h3>
                       </CardContent>
                     </Card>
                   ))}
                </div>
-               <Card className="shadow-soft">
-                  <CardHeader><CardTitle>Conversation Trends</CardTitle></CardHeader>
-                  <CardContent>
+               <Card className="shadow-soft border-none ring-1 ring-slate-200">
+                  <CardHeader className="border-b"><CardTitle>Conversation Activity (24h)</CardTitle></CardHeader>
+                  <CardContent className="pt-8">
                     <div className="h-[400px] w-full">
-                      <ChartContainer config={{ value: { label: "Messages", color: "hsl(var(--primary))" } }}>
+                      <ChartContainer config={{ value: { label: "Conversations", color: "hsl(var(--primary))" } }}>
                         <BarChart data={metrics?.hourlyMessageVolume || []}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis dataKey="timestamp" axisLine={false} tickLine={false} fontSize={12} tick={{ fill: '#94a3b8' }} />
-                          <YAxis axisLine={false} tickLine={false} fontSize={12} tick={{ fill: '#94a3b8' }} />
+                          <XAxis dataKey="timestamp" axisLine={false} tickLine={false} fontSize={10} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
+                          <YAxis axisLine={false} tickLine={false} fontSize={10} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
                           <Tooltip
-                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px', fontWeight: 'bold' }}
                             cursor={{ fill: '#f8fafc' }}
                           />
-                          <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="value" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
                         </BarChart>
                       </ChartContainer>
                     </div>
