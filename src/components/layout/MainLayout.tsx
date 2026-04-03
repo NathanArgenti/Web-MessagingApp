@@ -42,6 +42,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
   const setSelectedTenantId = useAuthStore(s => s.setSelectedTenantId);
   const clearAuth = useAuthStore(s => s.clearAuth);
+  const setActiveConversationId = useAuthStore(s => s.setActiveConversationId);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();

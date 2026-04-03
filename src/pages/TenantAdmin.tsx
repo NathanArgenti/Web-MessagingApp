@@ -37,13 +37,13 @@ export function TenantAdmin() {
   // Sync local state from tenant data when tenant changes
   useEffect(() => {
     if (tenant) {
-      setPrimaryColor(prev => tenant.branding?.primaryColor || '#06B6D4');
-      setWelcomeMessage(prev => tenant.branding?.welcomeMessage || '');
-      setWidgetPosition(prev => tenant.branding?.widgetPosition || 'bottom-right');
-      setThemePreset(prev => tenant.branding?.themePreset || 'modern');
-      setQueues(prev => tenant.queues ?? []);
-      setSites(prev => tenant.sites ?? []);
-      setEntraClientId(prev => tenant.authPolicy?.entraClientId || '');
+      setPrimaryColor(tenant.branding?.primaryColor || '#06B6D4');
+      setWelcomeMessage(tenant.branding?.welcomeMessage || '');
+      setWidgetPosition(tenant.branding?.widgetPosition || 'bottom-right');
+      setThemePreset(tenant.branding?.themePreset || 'modern');
+      setQueues(tenant.queues ?? []);
+      setSites(tenant.sites ?? []);
+      setEntraClientId(tenant.authPolicy?.entraClientId || '');
     }
   }, [tenant]);
   // Fetch agents scoped ONLY to selected tenant
@@ -95,7 +95,6 @@ export function TenantAdmin() {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': selectedTenantId || '',
           'X-Tenant-ID': selectedTenantId || ''
         },
         body: JSON.stringify(data)

@@ -27,49 +27,50 @@ export function AgentDashboard() {
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
   const presenceStatus = useAuthStore(s => s.user?.presenceStatus);
   const isOnline = useAuthStore(s => s.user?.isOnline);
+  const effectiveTenantId = selectedTenantId || tenant?.id || '';
   // Remove unused/incorrect contactName selector from auth store
   const [msgInput, setMsgInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const { data: conversations = [] } = useQuery({
-    queryKey: ['conversations', selectedTenantId],
+    queryKey: ['conversations', effectiveTenantId],
     queryFn: async () => {
       const res = await fetch('/api/conversations', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
       });
       const json = await res.json() as ApiResponse<Conversation[]>;
       return json.data ?? [];
     },
     refetchInterval: 5000,
-    enabled: !!token && !!selectedTenantId,
+    enabled: !!token && !!effectiveTenantId,
   });
   const { data: offlineRequests = [] } = useQuery({
-    queryKey: ['offline', selectedTenantId],
+    queryKey: ['offline', effectiveTenantId],
     queryFn: async () => {
       const res = await fetch('/api/internal/offline', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
       });
       const json = await res.json() as ApiResponse<OfflineRequest[]>;
       return json.data ?? [];
     },
     refetchInterval: 10000,
-    enabled: !!token && !!selectedTenantId,
+    enabled: !!token && !!effectiveTenantId,
   });
   const { data: metrics } = useQuery({
-    queryKey: ['metrics', selectedTenantId],
+    queryKey: ['metrics', effectiveTenantId],
     queryFn: async () => {
       const res = await fetch('/api/agent/metrics', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
       });
       const json = await res.json() as ApiResponse<SystemMetrics>;
-      if (!json.success) { 
-        console.warn('Metrics fetch failed:', json.error); 
-        return { hourlyMessageVolume: [], avgResponseTime: 0, resolutionRate: 0, activeAgents: 0, totalConvs: 0 }; 
+      if (!json.success) {
+        console.warn('Metrics fetch failed:', json.error);
+        return { hourlyMessageVolume: [], avgResponseTime: 0, resolutionRate: 0, activeAgents: 0, totalConvs: 0 };
       }
       return json.data!;
     },
     refetchInterval: 30000,
-    enabled: !!token && !!selectedTenantId,
+    enabled: !!token && !!effectiveTenantId,
   });
   const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
 
@@ -103,8 +104,8 @@ export function AgentDashboard() {
     },
     onSuccess: () => {
       toast.success('Presence updated');
-      queryClient.invalidateQueries({ queryKey: ['conversations', selectedTenantId] });
-      queryClient.invalidateQueries({ queryKey: ['metrics', selectedTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['metrics', effectiveTenantId] });
       refreshMe();
     }
   });
@@ -122,8 +123,8 @@ export function AgentDashboard() {
     },
     onSuccess: () => {
       toast.success("Queue membership updated");
-      queryClient.invalidateQueries({ queryKey: ['conversations', selectedTenantId] });
-      queryClient.invalidateQueries({ queryKey: ['metrics', selectedTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['metrics', effectiveTenantId] });
       refreshMe();
     }
   });
@@ -134,7 +135,7 @@ export function AgentDashboard() {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': selectedTenantId || ''
+          'X-Tenant-ID': effectiveTenantId
         }
       });
       if (!res.ok) throw new Error('Dispatch failed');
@@ -142,7 +143,7 @@ export function AgentDashboard() {
     },
     onSuccess: () => {
       toast.success('Request dispatched');
-      queryClient.invalidateQueries({ queryKey: ['offline', selectedTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['offline', effectiveTenantId] });
     }
   });
   useEffect(() => {
