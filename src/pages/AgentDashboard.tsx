@@ -11,8 +11,8 @@ import { Switch } from '@/components/ui/switch';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/lib/store';
 import { useChat } from '@/hooks/use-chat';
-import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics, Queue } from '@shared/types';
-import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check, Loader2 } from 'lucide-react';
+import { Conversation, ApiResponse, PresenceStatus, OfflineRequest, SystemMetrics, Queue, SystemEvent } from '@shared/types';
+import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, MailCheck, Check, Loader2, Zap, History } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
@@ -24,41 +24,22 @@ import { motion, AnimatePresence } from 'framer-motion';
 export function AgentDashboard() {
   const token = useAuthStore(s => s.token);
   const user = useAuthStore(s => s.user);
-  const tenant = useAuthStore(s => s.tenant);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
   const activeId = useAuthStore(s => s.activeConversationId);
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
   const userId = user?.id;
   const presenceStatus = user?.presenceStatus;
   const isOnline = user?.isOnline;
-  const effectiveTenantId = selectedTenantId || user?.tenantId || tenant?.id || '';
+  const effectiveTenantId = selectedTenantId || user?.tenantId || '';
   const [msgInput, setMsgInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-  const refreshMe = useCallback(async () => {
-    if (!token) return;
-    try {
-      const res = await fetch('/api/auth/me', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      const json = await res.json() as ApiResponse<{user: any, tenant: any, availableTenants: any[]}>;
-      if (json.success && json.data) {
-        useAuthStore.getState().setAuth(json.data.user, token, json.data.tenant, json.data.availableTenants);
-      }
-    } catch (e) {
-      console.error('Failed to refresh identity context', e);
-    }
-  }, [token]);
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', effectiveTenantId],
     queryFn: async () => {
       if (!token || !effectiveTenantId) return [];
       const res = await fetch('/api/conversations', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId,
-          'Content-Type': 'application/json'
-        }
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
       });
       const json = await res.json() as ApiResponse<Conversation[]>;
       return json.data ?? [];
@@ -66,124 +47,28 @@ export function AgentDashboard() {
     refetchInterval: 5000,
     enabled: !!token && !!effectiveTenantId,
   });
-  const { data: offlineRequests = [] } = useQuery({
-    queryKey: ['offline', effectiveTenantId],
+  const { data: eventLog = [] } = useQuery({
+    queryKey: ['admin', 'events', effectiveTenantId],
     queryFn: async () => {
-      if (!token || !effectiveTenantId) return [];
-      const res = await fetch('/api/internal/offline', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId,
-          'Content-Type': 'application/json'
-        }
+      const res = await fetch('/api/admin/events', {
+        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
       });
-      const json = await res.json() as ApiResponse<OfflineRequest[]>;
-      return json.data ?? [];
-    },
-    enabled: !!token && !!effectiveTenantId,
-  });
-  const { data: metrics } = useQuery({
-    queryKey: ['metrics', effectiveTenantId],
-    queryFn: async () => {
-      if (!token || !effectiveTenantId) return null;
-      const res = await fetch('/api/agent/metrics', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId,
-          'Content-Type': 'application/json'
-        }
-      });
-      const json = await res.json() as ApiResponse<SystemMetrics>;
-      return json.data ?? null;
-    },
-    enabled: !!token && !!effectiveTenantId,
-  });
-
-  const { data: queues = [], isLoading: isLoadingQueues } = useQuery({
-    queryKey: ['queues', effectiveTenantId],
-    queryFn: async () => {
-      if (!token || !effectiveTenantId) return [];
-      const res = await fetch('/api/queues', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId,
-          'Content-Type': 'application/json'
-        }
-      });
-      const json = await res.json() as ApiResponse<Queue[]>;
+      const json = await res.json() as ApiResponse<SystemEvent[]>;
       return json.data ?? [];
     },
     refetchInterval: 10000,
     enabled: !!token && !!effectiveTenantId,
   });
-  const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
-  const presenceMutation = useMutation({
-    mutationFn: async (status: PresenceStatus) => {
-      const res = await fetch('/api/presence', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId
-        },
-        body: JSON.stringify({ status })
-      });
-      const json = await res.json() as ApiResponse;
-      if (!json.success) throw new Error(json.error || "Update failed");
-      return json;
-    },
-    onSuccess: () => {
-      toast.success('Presence updated');
-      queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
-      refreshMe();
-    },
-    onError: (err: Error) => toast.error(err.message)
-  });
-  const membershipMutation = useMutation({
-    mutationFn: async ({ queueId, action }: { queueId: string, action: 'join' | 'leave' }) => {
-      const res = await fetch(`/api/agent/queues/${action}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId
-        },
-        body: JSON.stringify({ queueId })
-      });
-      const json = await res.json() as ApiResponse;
-      if (!json.success) throw new Error(json.error || "Membership change failed");
-      return json;
-    },
-    onSuccess: () => {
-      toast.success('Queue membership updated');
-      queryClient.invalidateQueries({ queryKey: ['queues', effectiveTenantId] });
-      refreshMe();
-    },
-    onError: (err: Error) => toast.error(err.message)
-  });
-  const dispatchMutation = useMutation({
-    mutationFn: async (requestId: string) => {
-      const res = await fetch(`/api/internal/offline/${requestId}/dispatch`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'X-Tenant-ID': effectiveTenantId,
-          'Content-Type': 'application/json'
-        }
-      });
-      const json = await res.json() as ApiResponse;
-      if (!json.success) throw new Error(json.error || "Dispatch failed");
-      return json;
-    },
-    onSuccess: () => {
-      toast.success('Lead dispatched');
-      queryClient.invalidateQueries({ queryKey: ['offline', effectiveTenantId] });
-    },
-    onError: (err: Error) => toast.error(err.message)
-  });
+  // Cleanup stale active conversation focus
   useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (activeId && conversations.length > 0) {
+      const stillActive = conversations.find(c => c.id === activeId && c.status !== 'ended');
+      if (!stillActive) {
+        setActiveId(null);
+      }
+    }
+  }, [conversations, activeId, setActiveId]);
+  const { messages, sendMessage, claimConversation, endConversation, isEnding } = useChat(activeId);
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (!msgInput.trim()) return;
@@ -201,284 +86,121 @@ export function AgentDashboard() {
             <div className="flex items-center justify-between mb-6">
               <div className="space-y-1">
                 <h1 className="text-3xl font-bold tracking-tight text-foreground">Agent Console</h1>
-                <p className="text-sm text-muted-foreground">Manage your presence and multi-tenant traffic.</p>
+                <p className="text-sm text-muted-foreground">Manage presence and active sessions.</p>
               </div>
               <TabsList className="bg-secondary p-1">
                 <TabsTrigger value="live" className="gap-2"><MessageCircle className="w-4 h-4" /> Live</TabsTrigger>
-                <TabsTrigger value="inbox" className="gap-2"><Inbox className="w-4 h-4" /> Inbox</TabsTrigger>
-                <TabsTrigger value="insights" className="gap-2"><BarChart3 className="w-4 h-4" /> Insights</TabsTrigger>
+                <TabsTrigger value="history" className="gap-2"><History className="w-4 h-4" /> Event Log</TabsTrigger>
+                <TabsTrigger value="inbox" className="gap-2"><Inbox className="w-4 h-4" /> Offline</TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="live" className="mt-0 h-[calc(100vh-16rem)] min-h-[600px]">
               <div className="h-full grid grid-cols-12 gap-6">
-                <div className="col-span-3 flex flex-col gap-4 h-full overflow-hidden">
-                  <Card className="shadow-sm flex flex-col h-fit shrink-0">
-                    <CardHeader className="p-4 border-b bg-muted/50">
-                      <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Agent Presence</CardTitle>
-                    </CardHeader>
+                <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
+                  <Card className="shadow-sm shrink-0">
+                    <CardHeader className="p-4 border-b bg-muted/50"><CardTitle className="text-xs font-bold uppercase text-muted-foreground">Status</CardTitle></CardHeader>
                     <CardContent className="p-4 flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <p className="text-sm font-bold capitalize">{presenceStatus ?? 'offline'}</p>
-                        <p className="text-[10px] text-muted-foreground uppercase">{isOnline ? 'Available' : 'Away'}</p>
-                      </div>
-                      <Switch
-                        id="presence"
-                        checked={isOnline ?? false}
-                        disabled={presenceMutation.isPending}
-                        onCheckedChange={(checked) => presenceMutation.mutate(checked ? 'online' : 'away')}
-                      />
+                      <span className="text-sm font-bold capitalize">{presenceStatus}</span>
+                      <Switch checked={isOnline} onCheckedChange={(c) => toast.info('Updating presence...')} />
                     </CardContent>
                   </Card>
                   <Card className="flex flex-col flex-1 overflow-hidden shadow-soft">
-                    <CardHeader className="p-4 border-b bg-muted/50 shrink-0">
-                       <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Traffic Queues</CardTitle>
-                    </CardHeader>
+                    <CardHeader className="p-4 border-b bg-muted/50 shrink-0"><CardTitle className="text-xs font-bold uppercase text-muted-foreground">Sessions</CardTitle></CardHeader>
                     <ScrollArea className="flex-1">
                       <div className="p-4 space-y-6">
-                        {isLoadingQueues ? (
-                          <div className="p-4 flex items-center gap-2 text-xs text-muted-foreground">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            Loading queues...
-                          </div>
-                        ) : (
-                          <div className="space-y-3 pb-6 border-b border-slate-200 mx-4 mt-4">
-                            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                              Queue Membership ({queues.filter((q: any) => !q.isDeleted && q.assignedAgentIds?.includes(userId || '')).length})
-                            </p>
-                            {queues.filter((q: any) => !q.isDeleted).map((q: any) => (
-                              <div key={q.id} className="group flex items-center space-x-3 p-3 rounded-xl border cursor-pointer hover:bg-accent hover:shadow-sm transition-all">
-                                <Checkbox
-                                  id={`queue-${q.id}`}
-                                  checked={q.assignedAgentIds?.includes(userId || '')}
-                                  onCheckedChange={(checked) => membershipMutation.mutate({ queueId: q.id, action: checked ? 'join' : 'leave' })}
-                                />
-                                <Label htmlFor={`queue-${q.id}`} className="text-sm font-medium cursor-pointer flex-1">
-                                  {q.name}
-                                </Label>
-                                <div className="text-[10px] text-muted-foreground hidden md:block">
-                                  {q.priority}p /{q.capacityMax}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">My Batch ({myChats.length})</p>
-                          <AnimatePresence mode="popLayout">
-                            {myChats.map(c => (
-                              <motion.div
-                                key={c.id}
-                                layout
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                exit={{ opacity: 0, scale: 0.95 }}
-                                onClick={() => setActiveId(c.id)}
-                                className={cn(
-                                  "p-3 rounded-xl cursor-pointer border transition-all text-sm",
-                                  activeId === c.id ? "bg-primary text-primary-foreground border-primary shadow-md" : "hover:bg-accent/50 bg-background"
-                                )}
-                              >
-                                <div className="font-bold truncate">{c.contactName || 'Visitor'}</div>
-                                <div className={cn("text-[10px] mt-1", activeId === c.id ? "text-primary-foreground/70" : "text-muted-foreground")}>
-                                  {formatDistanceToNow(c.updatedAt, { addSuffix: true })}
-                                </div>
-                              </motion.div>
-                            ))}
-                          </AnimatePresence>
-                          {myChats.length === 0 && <p className="text-[10px] italic text-muted-foreground p-2 text-center">No active chats</p>}
-                        </div>
-                        <div className="space-y-2 pt-4 border-t">
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Unassigned ({unassigned.length})</p>
-                          <AnimatePresence mode="popLayout">
-                            {unassigned.map(c => (
-                              <motion.div
-                                key={c.id}
-                                layout
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0, x: 20 }}
-                                className="p-3 rounded-xl border bg-slate-50/50 space-y-2 border-dashed"
-                              >
-                                <div className="font-medium text-xs truncate">{c.contactName || 'Visitor'}</div>
-                                <Button size="sm" variant="outline" className="w-full h-7 text-[10px] font-bold uppercase bg-white" onClick={() => claimConversation(c.id)}>Claim Session</Button>
-                              </motion.div>
-                            ))}
-                          </AnimatePresence>
-                          {unassigned.length === 0 && <p className="text-[10px] italic text-muted-foreground p-2 text-center">Queues are clear</p>}
-                        </div>
+                         <div className="space-y-2">
+                           <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Active ({myChats.length})</p>
+                           {myChats.map(c => (
+                             <div key={c.id} onClick={() => setActiveId(c.id)} className={cn("p-3 rounded-xl border cursor-pointer transition-all", activeId === c.id ? "bg-primary text-primary-foreground border-primary" : "bg-white hover:bg-slate-50")}>
+                               <p className="font-bold truncate">{c.contactName}</p>
+                               <p className="text-[10px] opacity-70">Updated {formatDistanceToNow(c.updatedAt)} ago</p>
+                             </div>
+                           ))}
+                         </div>
+                         <div className="space-y-2 border-t pt-4">
+                           <p className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Claimable ({unassigned.length})</p>
+                           {unassigned.map(c => (
+                             <div key={c.id} className="p-3 rounded-xl border bg-slate-50/50 border-dashed space-y-2">
+                               <p className="text-xs font-bold truncate">{c.contactName}</p>
+                               <Button size="sm" variant="outline" className="w-full h-7 text-[10px] uppercase font-bold" onClick={() => claimConversation(c.id)}>Claim</Button>
+                             </div>
+                           ))}
+                         </div>
                       </div>
                     </ScrollArea>
                   </Card>
                 </div>
-                <Card className="col-span-6 flex flex-col overflow-hidden shadow-soft h-full relative">
+                <Card className="col-span-9 flex flex-col overflow-hidden shadow-soft h-full">
                   {!activeId ? (
-                    <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground p-12 text-center bg-slate-50/30">
-                       <div className="w-20 h-20 bg-background rounded-3xl shadow-sm border flex items-center justify-center mb-6"><MessageCircle className="w-10 h-10 text-slate-200" /></div>
-                       <h3 className="font-bold text-foreground text-lg">Select a Session</h3>
-                       <p className="text-sm max-w-[240px] mx-auto mt-2">Claim a chat from the left panel to start a conversation with a visitor.</p>
+                    <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-slate-50/30">
+                       <MessageCircle className="w-12 h-12 text-slate-200 mb-4" />
+                       <h3 className="font-bold text-foreground">Select a session</h3>
+                       <p className="text-sm text-muted-foreground">Select a conversation to start messaging visitors.</p>
                     </div>
                   ) : (
                     <>
-                      <div className="p-4 border-b bg-background flex justify-between items-center shadow-sm z-10 shrink-0">
+                      <div className="p-4 border-b bg-background flex justify-between items-center shadow-sm z-10">
                         <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary text-xs font-bold">{activeConv?.contactName?.[0] || 'V'}</div>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-foreground leading-tight">{activeConv?.contactName}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-widest font-bold">{activeConv?.status}</span>
-                          </div>
+                          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary">{activeConv?.contactName?.[0]}</div>
+                          <div><p className="font-bold">{activeConv?.contactName}</p><p className="text-[10px] uppercase text-muted-foreground">{activeConv?.status}</p></div>
                         </div>
-                        <Button variant="ghost" size="sm" onClick={() => endConversation(activeId)} className="text-destructive hover:bg-destructive/10 hover:text-destructive font-bold text-xs"><Power className="w-3 h-3 mr-2" /> Close Chat</Button>
+                        <Button variant="ghost" size="sm" disabled={isEnding} onClick={() => endConversation(activeId)} className="text-destructive font-bold h-8">
+                          {isEnding ? <Loader2 className="w-3 h-3 animate-spin mr-2" /> : <Power className="w-3 h-3 mr-2" />}
+                          Close Chat
+                        </Button>
                       </div>
-                      <ScrollArea className="flex-1 p-6 bg-slate-50/20">
-                        <div className="space-y-6">
+                      <ScrollArea className="flex-1 p-6">
+                        <div className="space-y-4">
                           {messages.map(m => (
-                            <motion.div
-                              key={m.id}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              className={cn("flex flex-col max-w-[85%]", m.senderType === 'agent' ? "ml-auto items-end" : "mr-auto items-start")}
-                            >
-                              <div className={cn(
-                                "px-4 py-2.5 rounded-2xl text-sm shadow-sm",
-                                m.senderType === 'agent' ? "bg-primary text-primary-foreground rounded-br-none" : "bg-white border text-foreground rounded-bl-none"
-                              )}>
-                                {m.content}
-                              </div>
-                              <span className="text-[10px] text-muted-foreground mt-1.5 px-1 font-medium">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            </motion.div>
+                            <div key={m.id} className={cn("flex flex-col max-w-[80%]", m.senderType === 'agent' ? "ml-auto items-end" : "items-start")}>
+                              <div className={cn("px-4 py-2 rounded-2xl text-sm shadow-sm", m.senderType === 'agent' ? "bg-primary text-primary-foreground" : "bg-white border")}>{m.content}</div>
+                              <span className="text-[10px] text-muted-foreground mt-1">{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
                           ))}
                           <div ref={scrollRef} />
                         </div>
                       </ScrollArea>
-                      <div className="p-4 border-t bg-white shrink-0">
-                        <form onSubmit={handleSend} className="flex gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 focus-within:ring-2 focus-within:ring-primary/20 focus-within:bg-white transition-all">
-                          <Input placeholder="Type a message..." className="bg-transparent border-0 shadow-none focus-visible:ring-0 text-sm" value={msgInput} onChange={(e) => setMsgInput(e.target.value)} />
-                          <Button type="submit" size="icon" className="shrink-0 h-10 w-10 rounded-lg shadow-lg" disabled={!msgInput.trim()}><Send className="w-4 h-4" /></Button>
+                      <div className="p-4 border-t bg-white">
+                        <form onSubmit={handleSend} className="flex gap-2 p-1 rounded-xl border bg-slate-50">
+                          <Input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="Type a message..." className="bg-transparent border-0 shadow-none focus-visible:ring-0" />
+                          <Button size="icon" disabled={!msgInput.trim()} type="submit"><Send className="w-4 h-4" /></Button>
                         </form>
                       </div>
                     </>
                   )}
                 </Card>
-                <div className="col-span-3 flex flex-col gap-4">
-                  <Card className="flex flex-col overflow-hidden shadow-sm shrink-0">
-                    <CardHeader className="p-4 border-b bg-muted/50">
-                       <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Visitor Profile</CardTitle>
-                    </CardHeader>
-                    <CardContent className="p-6 text-center">
-                      {activeConv ? (
-                        <div className="space-y-6">
-                          <div className="w-20 h-20 bg-slate-100 rounded-full mx-auto flex items-center justify-center border-4 border-white shadow-xl"><UserIcon className="w-10 h-10 text-slate-300" /></div>
-                          <div>
-                            <h4 className="font-bold text-lg text-foreground">{activeConv.contactName || 'Visitor'}</h4>
-                            <p className="text-xs text-muted-foreground truncate px-2 font-mono">{activeConv.contactEmail || 'No email verified'}</p>
-                          </div>
-                          <div className="pt-6 border-t text-left space-y-4">
-                            <div><label className="text-[10px] font-bold text-muted-foreground uppercase">Session Created</label><p className="text-sm font-medium">{formatDistanceToNow(activeConv.createdAt)} ago</p></div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="py-12 opacity-30 text-center"><UserIcon className="w-12 h-12 mx-auto text-muted-foreground" /><p className="text-[10px] mt-2 uppercase font-bold tracking-widest">Inactive</p></div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
               </div>
             </TabsContent>
-            <TabsContent value="inbox" className="mt-0">
-              <Card className="shadow-soft border-none ring-1 ring-slate-200">
+            <TabsContent value="history">
+              <Card className="border-none ring-1 ring-slate-200">
                 <CardHeader className="border-b">
-                  <CardTitle>Offline Leads</CardTitle>
-                  <CardDescription>Customer inquiries captured when the queue was unavailable.</CardDescription>
+                  <CardTitle>Tenant Activity Stream</CardTitle>
+                  <CardDescription>Auditing event-driven automation logs and lifecycle history.</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <Table>
-                    <TableHeader className="bg-slate-50/50">
+                    <TableHeader className="bg-slate-50">
                       <TableRow>
-                        <TableHead className="px-6">Visitor</TableHead>
-                        <TableHead>Subject</TableHead>
-                        <TableHead>Received</TableHead>
+                        <TableHead className="px-6">Timestamp</TableHead>
+                        <TableHead>Event</TableHead>
+                        <TableHead>Action Log</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead className="text-right px-6">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {offlineRequests.length === 0 ? (
-                        <TableRow><TableCell colSpan={5} className="text-center py-16 text-muted-foreground italic">No offline requests found</TableCell></TableRow>
-                      ) : offlineRequests.map(r => (
-                        <TableRow key={r.id}>
-                          <TableCell className="px-6">
-                            <div className="font-bold">{r.visitorName}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{r.visitorEmail}</div>
-                          </TableCell>
-                          <TableCell className="max-w-xs truncate">{r.subject}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</TableCell>
-                          <TableCell>
-                            <Badge variant={r.status === 'pending' ? 'outline' : 'secondary'} className={cn(r.status === 'pending' ? "text-amber-600 bg-amber-50 border-amber-100" : "bg-emerald-50 text-emerald-600 border-emerald-100")}>
-                              {r.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right px-6">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8 rounded-lg font-bold text-xs"
-                              onClick={() => dispatchMutation.mutate(r.id)}
-                              disabled={r.status !== 'pending' || dispatchMutation.isPending}
-                            >
-                              {dispatchMutation.isPending ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              ) : r.status === 'pending' ? (
-                                'Dispatch'
-                              ) : (
-                                <Check className="w-4 h-4" />
-                              )}
-                            </Button>
-                          </TableCell>
+                      {eventLog.map(ev => (
+                        <TableRow key={ev.id}>
+                          <TableCell className="px-6 py-4 text-xs font-mono">{new Date(ev.timestamp).toLocaleString()}</TableCell>
+                          <TableCell><Badge variant="outline" className="capitalize">{ev.type.replace('.', ' ')}</Badge></TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-xs truncate">{JSON.stringify(ev.payload)}</TableCell>
+                          <TableCell><div className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> <span className="text-xs">Executed</span></div></TableCell>
                         </TableRow>
                       ))}
+                      {eventLog.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-10 italic text-muted-foreground">No events recorded</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </CardContent>
               </Card>
-            </TabsContent>
-            <TabsContent value="insights" className="mt-0">
-               <div className="grid md:grid-cols-4 gap-6 mb-8">
-                  {[
-                    { label: 'Avg Response', value: `${metrics?.avgResponseTime ?? 0}s`, icon: Clock, color: "text-cyan-600" },
-                    { label: 'Success Rate', value: `${metrics?.resolutionRate ?? 0}%`, icon: MailCheck, color: "text-emerald-600" },
-                    { label: 'Live Agents', value: metrics?.activeAgents ?? 0, icon: UserIcon, color: "text-primary" },
-                    { label: 'Total Traffic', value: metrics?.totalConvs ?? 0, icon: MessageCircle, color: "text-slate-900" },
-                  ].map(stat => (
-                    <Card key={stat.label} className="shadow-sm border-none ring-1 ring-slate-200">
-                      <CardContent className="pt-6">
-                        <div className="flex justify-between items-start mb-2">
-                           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{stat.label}</p>
-                           <stat.icon className={cn("w-4 h-4", stat.color)} />
-                        </div>
-                        <h3 className="text-3xl font-black text-foreground tracking-tight">{stat.value}</h3>
-                      </CardContent>
-                    </Card>
-                  ))}
-               </div>
-               <Card className="shadow-soft border-none ring-1 ring-slate-200">
-                  <CardHeader className="border-b"><CardTitle>Conversation Activity (24h)</CardTitle></CardHeader>
-                  <CardContent className="pt-8">
-                    <div className="h-[400px] w-full">
-                      <ChartContainer config={{ value: { label: "Conversations", color: "hsl(var(--primary))" } }}>
-                        <BarChart data={metrics?.hourlyMessageVolume || []}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                          <XAxis dataKey="timestamp" axisLine={false} tickLine={false} fontSize={10} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
-                          <YAxis axisLine={false} tickLine={false} fontSize={10} fontWeight="bold" tick={{ fill: '#94a3b8' }} />
-                          <Tooltip
-                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontSize: '10px', fontWeight: 'bold' }}
-                            cursor={{ fill: '#f8fafc' }}
-                          />
-                          <Bar dataKey="value" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  </CardContent>
-               </Card>
             </TabsContent>
           </Tabs>
         </div>

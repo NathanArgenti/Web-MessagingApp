@@ -3,7 +3,7 @@ import type {
     User, Tenant, Queue, Conversation, Message, PresenceStatus,
     PublicConfig, SystemEvent, EventType, ConversationStatus,
     OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite,
-    UserCreateInput, UserUpdateInput, QueueStatus, AuthPayload
+    UserCreateInput, UserUpdateInput, QueueStatus, AuthPayload, Workflow
 } from '@shared/types';
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
@@ -50,7 +50,9 @@ export class GlobalDurableObject extends DurableObject {
                   themePreset: 'modern'
                 },
                 queues: [queues[0], queues[1]],
-                workflows: [],
+                workflows: [
+                    { id: 'wf1', name: 'Notify Slack on Chat', eventType: 'conversation.started', actionType: 'webhook', targetUrl: 'https://hooks.slack.com/services/mock', active: true }
+                ],
                 authPolicy: { allowLocalAuth: true }
             }
         ];
@@ -139,10 +141,7 @@ export class GlobalDurableObject extends DurableObject {
             id: crypto.randomUUID(),
             name,
             sites: [],
-            branding: {
-                primaryColor: '#06B6D4',
-                welcomeMessage: 'Welcome to our platform!'
-            },
+            branding: { primaryColor: '#06B6D4', welcomeMessage: 'Welcome to our platform!' },
             queues: [],
             workflows: [],
             authPolicy: { allowLocalAuth: true }
@@ -188,36 +187,36 @@ export class GlobalDurableObject extends DurableObject {
         const updatedUsers = users.map(u => u.id === userId ? { ...u, presenceStatus: status, isOnline: status !== 'offline' } : u);
         await this.setStorage('users', updatedUsers);
     }
-
     async getQueues(tenantId: string): Promise<Queue[]> {
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === tenantId);
         return tenant?.queues || [];
     }
-
-    // --- WORKFLOW ENGINE ---
+    // --- WORKFLOW ENGINE & EVENT OUTBOX ---
+    async getEvents(tenantId: string): Promise<SystemEvent[]> {
+        return (await this.getStorage<SystemEvent[]>(`tenant:${tenantId}:events`)) || [];
+    }
     private async emitEvent(tenantId: string, type: EventType, payload: Record<string, any>): Promise<void> {
         const tenants = await this.getAllTenants();
         const tenant = tenants.find(t => t.id === tenantId);
         if (!tenant) return;
-
         const matchedWorkflows = (tenant.workflows || []).filter(w => w.active && w.eventType === type);
-        if (matchedWorkflows.length === 0) return;
-
-        const event: SystemEvent = {
-            id: crypto.randomUUID(),
-            tenantId,
-            type,
-            payload,
-            timestamp: Date.now(),
-            processed: true // Simulation: marked as processed immediately
-        };
-
-        // Log workflow execution for observability
+        const eventLog = await this.getEvents(tenantId);
         for (const workflow of matchedWorkflows) {
-            console.log(`[WORKFLOW ENGINE] Tenant ${tenantId} executing ${workflow.name} (${workflow.actionType}) for event ${type}`);
-            // Real implementation would dispatch webhooks/emails via this.ctx.storage.put to an outbox
+            const event: SystemEvent = {
+                id: crypto.randomUUID(),
+                tenantId,
+                type,
+                payload: { ...payload, workflowId: workflow.id, action: workflow.actionType },
+                timestamp: Date.now(),
+                processed: true // Mock immediate processing
+            };
+            eventLog.push(event);
+            console.log(`[WORKFLOW EXECUTION] Tenant ${tenantId}: Executed ${workflow.name} for ${type}`);
         }
+        // Limit log size
+        const trimmedLog = eventLog.slice(-100);
+        await this.setStorage(`tenant:${tenantId}:events`, trimmedLog);
     }
     // --- CONVERSATION METHODS ---
     async getConversations(tenantId: string): Promise<Conversation[]> {
@@ -280,9 +279,10 @@ export class GlobalDurableObject extends DurableObject {
             const convs = await this.getConversations(tenant.id);
             const idx = convs.findIndex(c => c.id === conversationId);
             if (idx !== -1) {
-                convs[idx] = { ...convs[idx], status: 'ended', updatedAt: Date.now() };
-                await this.emitEvent(tenant.id, 'conversation.ended', { conversationId });
+                const conv = convs[idx];
+                convs[idx] = { ...conv, status: 'ended', updatedAt: Date.now() };
                 await this.setStorage(`tenant:${tenant.id}:conversations`, convs);
+                await this.emitEvent(tenant.id, 'conversation.ended', { conversationId, ownerId: conv.ownerId });
                 return convs[idx];
             }
         }
@@ -297,7 +297,6 @@ export class GlobalDurableObject extends DurableObject {
         const msgs = await this.getMessages(msg.conversationId);
         msgs.push(msg);
         await this.setStorage(key, msgs);
-        // Update conversation last updated timestamp if tenantId is provided
         if (tenantId) {
             const convs = await this.getConversations(tenantId);
             const idx = convs.findIndex(c => c.id === msg.conversationId);
@@ -379,10 +378,8 @@ export class GlobalDurableObject extends DurableObject {
         const activeAgents = users.filter(u => u.tenantId === tenantId && u.isOnline).length;
         return {
             hourlyMessageVolume: [
-                { timestamp: '08:00', value: 12 },
-                { timestamp: '12:00', value: 45 },
-                { timestamp: '16:00', value: 30 },
-                { timestamp: '20:00', value: 15 }
+                { timestamp: '08:00', value: 12 }, { timestamp: '12:00', value: 45 },
+                { timestamp: '16:00', value: 30 }, { timestamp: '20:00', value: 15 }
             ],
             avgResponseTime: 42,
             resolutionRate: 88,

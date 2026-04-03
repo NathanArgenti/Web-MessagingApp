@@ -5,11 +5,10 @@ import { toast } from 'sonner';
 export function useChat(conversationId: string | null) {
   const queryClient = useQueryClient();
   const token = useAuthStore(s => s.token);
-  const userId = useAuthStore(s => s.user?.id);
   const userTenantId = useAuthStore(s => s.user?.tenantId);
-  const tenantId = useAuthStore(s => s.tenant?.id);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
-  const effectiveTenantId = selectedTenantId || userTenantId || tenantId || '';
+  const setActiveConversationId = useAuthStore(s => s.setActiveConversationId);
+  const effectiveTenantId = selectedTenantId || userTenantId || '';
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['messages', conversationId],
     queryFn: async () => {
@@ -19,13 +18,11 @@ export function useChat(conversationId: string | null) {
         if (token) headers['Authorization'] = `Bearer ${token}`;
         if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
         const res = await fetch(`/api/conversations/${conversationId}/messages`, { headers });
-        if (res.status === 403 || res.status === 404) {
-          return [];
-        }
+        if (res.status === 404 || res.status === 410) return [];
         const json = await res.json() as ApiResponse<Message[]>;
         return json.data ?? [];
       } catch (e) {
-        console.error('[AGENT CHIP POLL ERROR]', e);
+        console.error('[POLL ERROR]', e);
         return [];
       }
     },
@@ -44,48 +41,39 @@ export function useChat(conversationId: string | null) {
         body: JSON.stringify({ content }),
       });
       const json = await res.json() as ApiResponse<Message>;
-      if (!json.success) throw new Error(json.error || "Failed to deliver message");
+      if (!json.success) throw new Error(json.error || "Failed to deliver");
       return json.data!;
     },
     onSuccess: (newMessage) => {
       queryClient.setQueryData(['messages', conversationId], (old: Message[] = []) => [...old, newMessage]);
     },
-    onError: (err: Error) => toast.error(err.message),
   });
   const claimMutation = useMutation({
     mutationFn: async (id: string) => {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
-      const res = await fetch(`/api/conversations/${id}/claim`, {
-        method: 'POST',
-        headers
-      });
+      const headers: Record<string, string> = { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId };
+      const res = await fetch(`/api/conversations/${id}/claim`, { method: 'POST', headers });
       const json = await res.json() as ApiResponse<Conversation>;
-      if (!json.success) throw new Error(json.error || "Could not claim conversation");
+      if (!json.success) throw new Error(json.error);
       return json.data!;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
+      setActiveConversationId(data.id);
       toast.success('Conversation claimed');
     },
     onError: (err: Error) => toast.error(err.message),
   });
   const endMutation = useMutation({
     mutationFn: async (id: string) => {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
-      const res = await fetch(`/api/conversations/${id}/end`, {
-        method: 'POST',
-        headers
-      });
+      const headers: Record<string, string> = { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId };
+      const res = await fetch(`/api/conversations/${id}/end`, { method: 'POST', headers });
       const json = await res.json() as ApiResponse<Conversation>;
-      if (!json.success) throw new Error(json.error || "End failed");
+      if (!json.success) throw new Error(json.error);
       return json.data!;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
+      setActiveConversationId(null);
       toast.success('Session closed');
     },
     onError: (err: Error) => toast.error(err.message),
@@ -97,5 +85,6 @@ export function useChat(conversationId: string | null) {
     isSending: sendMutation.isPending,
     claimConversation: claimMutation.mutate,
     endConversation: endMutation.mutate,
+    isEnding: endMutation.isPending
   };
 }
