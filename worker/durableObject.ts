@@ -5,7 +5,7 @@ import type {
     OfflineRequest, SystemMetrics, GlobalMetrics, MetricPoint, TenantSite,
     UserCreateInput, UserUpdateInput, QueueStatus, AuthPayload
 } from '@shared/types';
-import { nanoid } from 'nanoid';
+
 export class GlobalDurableObject extends DurableObject {
     private async getStorage<T>(key: string): Promise<T | undefined> {
         return await this.ctx.storage.get<T>(key);
@@ -62,7 +62,7 @@ export class GlobalDurableObject extends DurableObject {
             return users[existingIdx];
         }
         const newUser: User = {
-            id: input.id || nanoid(),
+            id: input.id || crypto.randomUUID(),
             email: input.email,
             name: input.name,
             role: input.role,
@@ -117,7 +117,7 @@ export class GlobalDurableObject extends DurableObject {
     async createTenant(name: string): Promise<Tenant> {
         const tenants = await this.getAllTenants();
         const newTenant: Tenant = {
-            id: nanoid(),
+            id: crypto.randomUUID(),
             name,
             sites: [],
             branding: {
@@ -185,7 +185,7 @@ export class GlobalDurableObject extends DurableObject {
         if (!tenantId) return null;
         const convs = await this.getConversations(tenantId);
         const newConv: Conversation = {
-            id: nanoid(),
+            id: crypto.randomUUID(),
             tenantId,
             queueId,
             status: 'unassigned',

@@ -62,7 +62,11 @@ export function AgentDashboard() {
         headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
       });
       const json = await res.json() as ApiResponse<SystemMetrics>;
-      return json.data;
+      if (!json.success) { 
+        console.warn('Metrics fetch failed:', json.error); 
+        return { hourlyMessageVolume: [], avgResponseTime: 0, resolutionRate: 0, activeAgents: 0, totalConvs: 0 }; 
+      }
+      return json.data!;
     },
     refetchInterval: 30000,
     enabled: !!token && !!selectedTenantId,

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics, SystemMetrics } from '@shared/types';
-import { nanoid } from 'nanoid';
+
 export function userRoutes(rawApp: any) {
     const app = rawApp as Hono;
     const getAuthToken = (c: any) => c.req.header('Authorization')?.split(' ')[1] || '';
@@ -45,7 +45,7 @@ export function userRoutes(rawApp: any) {
         const body = await c.req.json();
         const stub = getStub(c);
         const data = await stub.saveOfflineRequest({
-            id: nanoid(),
+            id: crypto.randomUUID(),
             ...body,
             status: 'pending',
             createdAt: Date.now()
@@ -214,7 +214,7 @@ export function userRoutes(rawApp: any) {
             const me = await stub.getMe(token);
             if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
             message = {
-                id: nanoid(),
+                id: crypto.randomUUID(),
                 conversationId: id,
                 senderId: me.user.id,
                 senderType: 'agent',
@@ -223,7 +223,7 @@ export function userRoutes(rawApp: any) {
             };
         } else {
             message = {
-                id: nanoid(),
+                id: crypto.randomUUID(),
                 conversationId: id,
                 senderId: 'visitor',
                 senderType: 'visitor',
