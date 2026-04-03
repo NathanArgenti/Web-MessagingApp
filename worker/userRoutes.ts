@@ -13,9 +13,7 @@ export function userRoutes(rawApp: any) {
         const me = await stub.getMe(token);
         const targetTenantId = c.req.header('X-Tenant-ID');
         if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
-        // Superadmins bypass isolation checks
         if (me.user.role === 'superadmin') return await next();
-        // Agents and Tenant Admins MUST provide a matching X-Tenant-ID
         if (!targetTenantId || me.user.tenantId !== targetTenantId) {
             console.error(`[SECURITY] Tenant mismatch for user ${me.user.id}. Header: ${targetTenantId}, User: ${me.user.tenantId}`);
             return c.json({ success: false, error: 'Access denied: Tenant isolation violation' }, 403);
@@ -160,10 +158,70 @@ export function userRoutes(rawApp: any) {
         await stub.leaveQueue(me.user.id, queueId);
         return c.json({ success: true });
     });
+    // MESSAGES (HARDENED)
+    app.get('/api/conversations/:id/messages', async (c) => {
+        const id = c.req.param('id');
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const targetTenantId = c.req.header('X-Tenant-ID');
+        // Security: If internal user (token present), verify tenant context
+        if (token) {
+            const me = await stub.getMe(token);
+            if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+            if (me.user.role !== 'superadmin') {
+                const conv = await stub.getConversationById(id);
+                if (!conv || conv.tenantId !== me.user.tenantId) {
+                    return c.json({ success: false, error: 'Access denied: Conversation isolation' }, 403);
+                }
+            }
+        }
+        const data = await stub.getMessages(id);
+        return c.json({ success: true, data: data || [] });
+    });
+    app.post('/api/conversations/:id/messages', async (c) => {
+        const id = c.req.param('id');
+        const body = await c.req.json();
+        const token = getAuthToken(c);
+        const stub = getStub(c);
+        const targetTenantId = c.req.header('X-Tenant-ID');
+        let message: Message;
+        let tenantId: string | undefined;
+        if (token) {
+            const me = await stub.getMe(token);
+            if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+            const conv = await stub.getConversationById(id);
+            if (!conv) return c.json({ success: false, error: 'Conversation not found' }, 404);
+            if (me.user.role !== 'superadmin' && me.user.tenantId !== conv.tenantId) {
+                 return c.json({ success: false, error: 'Tenant context mismatch' }, 403);
+            }
+            tenantId = conv.tenantId;
+            message = {
+                id: crypto.randomUUID(),
+                conversationId: id,
+                senderId: me.user.id,
+                senderType: 'agent',
+                content: body.content,
+                timestamp: Date.now()
+            };
+        } else {
+            const conv = await stub.getConversationById(id);
+            if (!conv) return c.json({ success: false, error: 'Conversation not found' }, 404);
+            tenantId = conv.tenantId;
+            message = {
+                id: crypto.randomUUID(),
+                conversationId: id,
+                senderId: 'visitor',
+                senderType: 'visitor',
+                content: body.content,
+                timestamp: Date.now()
+            };
+        }
+        const data = await stub.sendMessage(message, tenantId);
+        return c.json({ success: true, data });
+    });
     // ADMIN & INTERNAL
     app.get('/api/admin/agents', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
-        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const data = await stub.getUsers(tenantId, 'agent');
         const admins = await stub.getUsers(tenantId, 'tenant_admin');
@@ -264,46 +322,5 @@ export function userRoutes(rawApp: any) {
         const stub = getStub(c);
         const data = await stub.login(email);
         return c.json({ success: !!data, data });
-    });
-    app.get('/api/conversations/:id/messages', async (c) => {
-        const id = c.req.param('id');
-        const stub = getStub(c);
-        const data = await stub.getMessages(id);
-        return c.json({ success: true, data: data || [] });
-    });
-    app.post('/api/conversations/:id/messages', async (c) => {
-        const id = c.req.param('id');
-        const body = await c.req.json();
-        const token = getAuthToken(c);
-        const stub = getStub(c);
-        const targetTenantId = c.req.header('X-Tenant-ID');
-        let message: Message;
-        if (token) {
-            const me = await stub.getMe(token);
-            if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
-            // Validate tenant context for agent messages
-            if (me.user.role !== 'superadmin' && targetTenantId && me.user.tenantId !== targetTenantId) {
-                 return c.json({ success: false, error: 'Tenant context mismatch' }, 403);
-            }
-            message = {
-                id: crypto.randomUUID(),
-                conversationId: id,
-                senderId: me.user.id,
-                senderType: 'agent',
-                content: body.content,
-                timestamp: Date.now()
-            };
-        } else {
-            message = {
-                id: crypto.randomUUID(),
-                conversationId: id,
-                senderId: 'visitor',
-                senderType: 'visitor',
-                content: body.content,
-                timestamp: Date.now()
-            };
-        }
-        const data = await stub.sendMessage(message);
-        return c.json({ success: true, data });
     });
 }

@@ -16,6 +16,7 @@ import { MessageCircle, User as UserIcon, Send, Clock, Power, Inbox, BarChart3, 
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { ChartContainer } from '@/components/ui/chart';
 import { toast } from 'sonner';
 import { useCallback } from 'react';
 export function AgentDashboard() {
@@ -37,7 +38,7 @@ export function AgentDashboard() {
     queryFn: async () => {
       if (!token || !effectiveTenantId) return [];
       const res = await fetch('/api/conversations', {
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${token}`,
           'X-Tenant-ID': effectiveTenantId
         }
@@ -53,7 +54,7 @@ export function AgentDashboard() {
     queryFn: async () => {
       if (!token || !effectiveTenantId) return [];
       const res = await fetch('/api/internal/offline', {
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${token}`,
           'X-Tenant-ID': effectiveTenantId
         }
@@ -69,7 +70,7 @@ export function AgentDashboard() {
     queryFn: async () => {
       if (!token || !effectiveTenantId) return null;
       const res = await fetch('/api/agent/metrics', {
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${token}`,
           'X-Tenant-ID': effectiveTenantId
         }
@@ -181,7 +182,7 @@ export function AgentDashboard() {
                 <TabsTrigger value="insights" className="gap-2"><BarChart3 className="w-4 h-4" /> Insights</TabsTrigger>
               </TabsList>
             </div>
-            <TabsContent value="live" className="mt-0">
+            <TabsContent value="live" key={effectiveTenantId} className="mt-0">
               <div className="h-[calc(100vh-18rem)] grid grid-cols-12 gap-6">
                 <div className="col-span-3 flex flex-col gap-4 overflow-hidden">
                   <Card className="shadow-sm flex flex-col h-fit">
@@ -380,10 +381,10 @@ export function AgentDashboard() {
                   ))}
                </div>
                <Card className="shadow-soft">
-                  <CardHeader><CardTitle>Conversation Trends (Mock)</CardTitle></CardHeader>
+                  <CardHeader><CardTitle>Conversation Trends</CardTitle></CardHeader>
                   <CardContent>
                     <div className="h-[400px] w-full">
-                      <ResponsiveContainer width="100%" height={400}>
+                      <ChartContainer config={{ value: { label: "Messages", color: "hsl(var(--primary))" } }}>
                         <BarChart data={metrics?.hourlyMessageVolume || []}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                           <XAxis dataKey="timestamp" axisLine={false} tickLine={false} fontSize={12} tick={{ fill: '#94a3b8' }} />
@@ -394,7 +395,7 @@ export function AgentDashboard() {
                           />
                           <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                         </BarChart>
-                      </ResponsiveContainer>
+                      </ChartContainer>
                     </div>
                   </CardContent>
                </Card>

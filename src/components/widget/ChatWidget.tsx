@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-
-import { MessageCircle, X, Send, Loader2, Mail, CheckCircle2 } from 'lucide-react';
+import { MessageCircle, X, Send, Loader2, Mail, CheckCircle2, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ApiResponse, Message, PublicConfig, Conversation, QueueStatus } from '@shared/types';
-
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 interface ChatWidgetProps {
@@ -66,18 +64,26 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     return () => clearInterval(interval);
   }, [config, isOpen, session]);
   useEffect(() => {
-    if (!sessionRef.current?.convId || !isOpen) return;
-    const interval = setInterval(() => {
-      if (!sessionRef.current) return;
-      fetch(`/api/conversations/${sessionRef.current.convId}/messages`)
-        .then(res => res.json())
-        .then((json: ApiResponse<Message[]>) => {
-          if (json.success) setMessages(json.data ?? []);
-        })
-        .catch(err => console.error("Poll messages error", err));
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [isOpen]);
+    if (!session?.convId || !isOpen) return;
+    const controller = new AbortController();
+    const poll = async () => {
+        try {
+            const res = await fetch(`/api/conversations/${session.convId}/messages`, {
+                signal: controller.signal
+            });
+            const json = await res.json() as ApiResponse<Message[]>;
+            if (json.success) setMessages(json.data ?? []);
+        } catch (err: any) {
+            if (err.name !== 'AbortError') console.error("Poll messages error", err);
+        }
+    };
+    const interval = setInterval(poll, 4000);
+    poll(); // Initial poll
+    return () => {
+        clearInterval(interval);
+        controller.abort();
+    };
+  }, [session?.convId, isOpen]);
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -105,6 +111,13 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     } finally {
       setIsStarting(false);
     }
+  };
+  const clearChat = () => {
+    localStorage.removeItem(`mercury_session_${siteKey}`);
+    setSession(null);
+    setMessages([]);
+    setShowOfflineForm(false);
+    setOfflineSubmitted(false);
   };
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,9 +164,8 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     }
   };
   if (!config) return null;
-  const branding = config.branding;
-  const primaryColor = branding?.primaryColor || '#06B6D4';
-  const positionClass = branding?.widgetPosition === 'bottom-left' ? 'left-6' : 'right-6';
+  const primaryColor = config.branding?.primaryColor ?? '#06B6D4';
+  const positionClass = config.branding?.widgetPosition === 'bottom-left' ? 'left-6' : 'right-6';
   const isAvailable = status?.available ?? true;
   return (
     <div className={cn("fixed bottom-6 z-[100] font-sans", positionClass)}>
@@ -166,9 +178,16 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
                 </div>
                 <h3 className="text-sm font-bold">{config.name}</h3>
               </div>
-              <Button variant="ghost" size="icon" className="text-white hover:bg-white/20" onClick={() => setIsOpen(false)}>
-                <X className="w-5 h-5" />
-              </Button>
+              <div className="flex items-center">
+                {session && (
+                    <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 mr-1" onClick={clearChat} title="Reset session">
+                        <RotateCcw className="w-4 h-4" />
+                    </Button>
+                )}
+                <Button variant="ghost" size="icon" className="text-white hover:bg-white/20" onClick={() => setIsOpen(false)}>
+                  <X className="w-5 h-5" />
+                </Button>
+              </div>
             </div>
             <div className="flex-1 flex flex-col bg-slate-50 relative overflow-hidden">
               {offlineSubmitted ? (
@@ -199,7 +218,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
                     <MessageCircle className="w-8 h-8" style={{ color: primaryColor }} />
                   </div>
                   <h4 className="font-bold text-slate-800">Hi there!</h4>
-                  <p className="text-sm text-slate-500 leading-relaxed px-4">{branding?.welcomeMessage}</p>
+                  <p className="text-sm text-slate-500 leading-relaxed px-4">{config.branding?.welcomeMessage}</p>
                   {isAvailable ? (
                     <Button className="w-full mt-6 text-white" style={{ backgroundColor: primaryColor }} onClick={startChat} disabled={isStarting}>
                       {isStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Start Chat'}

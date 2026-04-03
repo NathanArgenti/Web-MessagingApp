@@ -14,7 +14,6 @@ export class GlobalDurableObject extends DurableObject {
     }
     async seedDatabase(isProd: boolean = false): Promise<boolean> {
         const existingTenants = await this.getStorage<Tenant[]>('tenants');
-        // If production mode and data already exists, don't wipe - just ensure admin exists
         if (isProd && existingTenants && existingTenants.length > 0) {
             const users = (await this.getStorage<User[]>('users')) || [];
             if (!users.some(u => u.email === 'admin@mercury.com')) {
@@ -32,7 +31,6 @@ export class GlobalDurableObject extends DurableObject {
             }
             return false;
         }
-        // In dev mode or empty prod, we can perform a full reset
         if (!isProd) {
             await this.ctx.storage.deleteAll();
         }
@@ -194,6 +192,15 @@ export class GlobalDurableObject extends DurableObject {
     async getConversations(tenantId: string): Promise<Conversation[]> {
         return (await this.getStorage<Conversation[]>(`tenant:${tenantId}:conversations`)) || [];
     }
+    async getConversationById(conversationId: string): Promise<Conversation | null> {
+        const tenants = await this.getAllTenants();
+        for (const t of tenants) {
+            const convs = await this.getConversations(t.id);
+            const found = convs.find(c => c.id === conversationId);
+            if (found) return found;
+        }
+        return null;
+    }
     async createConversation(siteKey: string, queueId: string, contactName: string): Promise<Conversation | null> {
         const tenants = await this.getAllTenants();
         let tenantId = "";
@@ -251,11 +258,20 @@ export class GlobalDurableObject extends DurableObject {
     async getMessages(conversationId: string): Promise<Message[]> {
         return (await this.getStorage<Message[]>(`messages:${conversationId}`)) || [];
     }
-    async sendMessage(msg: Message): Promise<Message> {
+    async sendMessage(msg: Message, tenantId?: string): Promise<Message> {
         const key = `messages:${msg.conversationId}`;
         const msgs = await this.getMessages(msg.conversationId);
         msgs.push(msg);
         await this.setStorage(key, msgs);
+        // Update conversation last updated timestamp if tenantId is provided
+        if (tenantId) {
+            const convs = await this.getConversations(tenantId);
+            const idx = convs.findIndex(c => c.id === msg.conversationId);
+            if (idx !== -1) {
+                convs[idx].updatedAt = Date.now();
+                await this.setStorage(`tenant:${tenantId}:conversations`, convs);
+            }
+        }
         return msg;
     }
     // --- PUBLIC CONFIG & STATUS ---
@@ -281,7 +297,7 @@ export class GlobalDurableObject extends DurableObject {
         let targetQueue: Queue | undefined;
         let tenantId = '';
         for (const tenant of tenants) {
-            targetQueue = tenant.queues.find(q => q.id === queueId);
+            targetQueue = (tenant.queues || []).find(q => q.id === queueId);
             if (targetQueue) {
                 tenantId = tenant.id;
                 break;
@@ -289,7 +305,7 @@ export class GlobalDurableObject extends DurableObject {
         }
         if (!targetQueue) return { available: false, agentsOnline: 0, capacityUsed: 0, capacityMax: 10, isFull: true };
         const users = (await this.getStorage<User[]>('users')) || [];
-        const onlineAgents = users.filter(u => u.isOnline && u.tenantId === tenantId && targetQueue!.assignedAgentIds?.includes(u.id));
+        const onlineAgents = users.filter(u => u.isOnline && u.tenantId === tenantId && (targetQueue!.assignedAgentIds || []).includes(u.id));
         const convs = await this.getConversations(tenantId);
         const activeConvs = convs.filter(c => c.queueId === queueId && c.status === 'owned');
         return {
