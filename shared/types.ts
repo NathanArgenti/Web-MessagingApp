@@ -161,6 +161,7 @@ export interface PublicConfig {
   name: string;
   branding: Tenant['branding'];
   queues: { id: string; name: string; priority: number }[];
+  defaultQueueId?: string;
   initialQueueStatus?: QueueStatus;
 }
 export interface ApiResponse<T = unknown> {

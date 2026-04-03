@@ -314,12 +314,14 @@ export class GlobalDurableObject extends DurableObject {
         for (const t of tenants) {
             const site = t.sites.find(s => s.key === siteKey);
             if (site) {
+                const defaultQid = site.defaultQueueId || t.queues[0]?.id || '';
                 return {
                     tenantId: t.id,
                     name: t.name,
                     branding: t.branding,
+                    defaultQueueId: defaultQid,
                     queues: t.queues.map(q => ({ id: q.id, name: q.name, priority: q.priority || 0 })),
-                    initialQueueStatus: await this.getQueueStatus(site.defaultQueueId || t.queues[0]?.id)
+                    initialQueueStatus: await this.getQueueStatus(defaultQid)
                 };
             }
         }

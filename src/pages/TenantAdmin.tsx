@@ -42,13 +42,13 @@ export function TenantAdmin() {
 
   const tenant = useAuthStore(s => s.tenant);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
-  const [primaryColor, setPrimaryColor] = useState(tenant?.branding.primaryColor || '#06B6D4');
-  const [welcomeMessage, setWelcomeMessage] = useState(tenant?.branding.welcomeMessage || '');
-  const [widgetPosition, setWidgetPosition] = useState(tenant?.branding.widgetPosition || 'bottom-right');
-  const [themePreset, setThemePreset] = useState(tenant?.branding.themePreset || 'modern');
-  const [queues, setQueues] = useState<Queue[]>(tenant?.queues ?? []);
-  const [sites, setSites] = useState<TenantSite[]>(tenant?.sites ?? []);
-  const [entraClientId, setEntraClientId] = useState(tenant?.authPolicy?.entraClientId || '');
+  const [primaryColor, setPrimaryColor] = useState('#06B6D4');
+  const [welcomeMessage, setWelcomeMessage] = useState('');
+  const [widgetPosition, setWidgetPosition] = useState('bottom-right');
+  const [themePreset, setThemePreset] = useState('modern');
+  const [queues, setQueues] = useState<Queue[]>([]);
+  const [sites, setSites] = useState<TenantSite[]>([]);
+  const [entraClientId, setEntraClientId] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const inviteForm = useForm<{ email: string; name: string }>();
@@ -67,15 +67,16 @@ export function TenantAdmin() {
     queryKey: ['admin', 'agents', selectedTenantId],
     queryFn: async () => {
       const res = await fetch('/api/admin/agents', {
-        headers: { 
-          'Authorization': `Bearer ${token}`, 
-          'X-Tenant-ID': selectedTenantId || '' 
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': selectedTenantId || ''
         }
       });
       const json = await res.json() as ApiResponse<User[]>;
       return json.data ?? [];
     },
-    enabled: !!token && !!selectedTenantId
+    enabled: !!token && !!selectedTenantId,
+    refetchInterval: 10000
   });
   const handleSave = async () => {
     setIsSaving(true);

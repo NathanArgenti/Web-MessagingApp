@@ -113,6 +113,7 @@ export function AgentDashboard() {
       const json = await res.json() as ApiResponse<Queue[]>;
       return json.data ?? [];
     },
+    refetchInterval: 10000,
     enabled: !!token && !!effectiveTenantId,
   });
   const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
@@ -424,7 +425,7 @@ export function AgentDashboard() {
                               onClick={() => dispatchMutation.mutate(r.id)}
                               disabled={r.status !== 'pending' || dispatchMutation.isPending}
                             >
-                              {dispatchMutation.isPending && dispatchMutation.variables === r.id ? (
+                              {dispatchMutation.isPending ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                               ) : r.status === 'pending' ? (
                                 'Dispatch'

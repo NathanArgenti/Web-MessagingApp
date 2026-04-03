@@ -61,8 +61,11 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   useEffect(() => {
     if (!config?.tenantId || !isOpen || session) return;
     const pollStatus = () => {
-      const qId = config.queues?.[0]?.id;
-      if (!qId) return;
+      const qId = config?.defaultQueueId || config?.queues?.[0]?.id || '';
+      if (!qId) {
+        console.warn('No queue ID for status poll');
+        return;
+      }
       fetch(`/api/public/queue/${qId}/status`)
         .then(res => res.json())
         .then((json: ApiResponse<QueueStatus>) => {
@@ -106,6 +109,11 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   }, [messages]);
   const startChat = useCallback(async () => {
     if (!config) return;
+    const queueId = config?.defaultQueueId || config?.queues?.[0]?.id || '';
+    if (!queueId) {
+      toast.error('No queue configured');
+      return;
+    }
     setIsStarting(true);
     try {
       const visitorId = crypto.randomUUID?.() || Math.random().toString(36).substring(2);
@@ -114,7 +122,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           siteKey,
-          queueId: config.queues?.[0]?.id,
+          queueId,
           name: 'Visitor ' + visitorId.slice(0, 4),
         })
       });
@@ -169,7 +177,7 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
     const fd = new FormData(e.currentTarget);
     const payload = {
       tenantId: config?.tenantId,
-      queueId: config?.queues?.[0]?.id,
+      queueId: config?.defaultQueueId || config?.queues?.[0]?.id || '',
       visitorName: fd.get('name'),
       visitorEmail: fd.get('email'),
       subject: 'Offline Message',
