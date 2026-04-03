@@ -5,18 +5,25 @@ import { toast } from 'sonner';
 export function useChat(conversationId: string | null) {
   const queryClient = useQueryClient();
   const token = useAuthStore(s => s.token);
+  const user = useAuthStore(s => s.user);
+  const tenant = useAuthStore(s => s.tenant);
+  const selectedTenantId = useAuthStore(s => s.selectedTenantId);
+  const effectiveTenantId = selectedTenantId || user?.tenantId || tenant?.id || '';
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['messages', conversationId],
     queryFn: async () => {
       if (!conversationId) return [];
       try {
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
         const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers
         });
         const json = await res.json() as ApiResponse<Message[]>;
         return json.data ?? [];
       } catch (e) {
-        console.error('[POLLING ERROR]', e);
+        console.error('[CHAT ERROR]', e);
         return [];
       }
     },
@@ -26,12 +33,12 @@ export function useChat(conversationId: string | null) {
   const sendMutation = useMutation({
     mutationFn: async (content: string) => {
       if (!conversationId) throw new Error('No active conversation');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
       const res = await fetch(`/api/conversations/${conversationId}/messages`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers,
         body: JSON.stringify({ content }),
       });
       const json = await res.json() as ApiResponse<Message>;
@@ -45,9 +52,12 @@ export function useChat(conversationId: string | null) {
   });
   const claimMutation = useMutation({
     mutationFn: async (id: string) => {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
       const res = await fetch(`/api/conversations/${id}/claim`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers
       });
       const json = await res.json() as ApiResponse<Conversation>;
       if (!json.success) throw new Error(json.error);
@@ -61,9 +71,12 @@ export function useChat(conversationId: string | null) {
   });
   const endMutation = useMutation({
     mutationFn: async (id: string) => {
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (effectiveTenantId) headers['X-Tenant-ID'] = effectiveTenantId;
       const res = await fetch(`/api/conversations/${id}/end`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers
       });
       const json = await res.json() as ApiResponse<Conversation>;
       if (!json.success) throw new Error(json.error);

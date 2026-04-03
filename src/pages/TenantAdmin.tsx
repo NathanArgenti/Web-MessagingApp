@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { useAuthStore } from '@/lib/store';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Save, Plus, Trash2, Globe, Shield, Monitor, ListFilter, Users as UsersIcon, UserPlus, Fingerprint, Lock } from 'lucide-react';
+import { Save, Plus, Trash2, Globe, Shield, Monitor, ListFilter, Users as UsersIcon, UserPlus, Fingerprint, Lock, Loader2 } from 'lucide-react';
 import { Queue, TenantSite, ApiResponse, User } from '@shared/types';
 import { nanoid } from 'nanoid';
 import { cn } from "@/lib/utils";
@@ -33,8 +33,6 @@ export function TenantAdmin() {
   const [isSaving, setIsSaving] = useState(false);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const inviteForm = useForm<{ email: string; name: string }>();
-
-  // Sync local state from tenant data when tenant changes
   useEffect(() => {
     if (tenant) {
       setPrimaryColor(tenant.branding?.primaryColor || '#06B6D4');
@@ -46,12 +44,14 @@ export function TenantAdmin() {
       setEntraClientId(tenant.authPolicy?.entraClientId || '');
     }
   }, [tenant]);
-  // Fetch agents scoped ONLY to selected tenant
-  const { data: agents = [] } = useQuery({
+  const { data: agents = [], isLoading: isLoadingAgents } = useQuery({
     queryKey: ['admin', 'agents', selectedTenantId],
     queryFn: async () => {
       const res = await fetch('/api/admin/agents', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': selectedTenantId || '' }
+        headers: { 
+          'Authorization': `Bearer ${token}`, 
+          'X-Tenant-ID': selectedTenantId || '' 
+        }
       });
       const json = await res.json() as ApiResponse<User[]>;
       return json.data ?? [];
@@ -70,20 +70,20 @@ export function TenantAdmin() {
         },
         body: JSON.stringify({
           branding: { primaryColor, welcomeMessage, widgetPosition, themePreset },
-          queues,
+          queues: queues.filter(q => !q.isDeleted),
           sites,
-          authPolicy: { 
+          authPolicy: {
             allowLocalAuth: true,
-            entraClientId 
+            entraClientId
           }
         })
       });
       if (res.ok) {
-        toast.success('Tenant settings hardened and updated');
+        toast.success('Tenant settings synchronized');
         queryClient.invalidateQueries();
-      } else toast.error('Failed to update settings');
+      } else toast.error('Failed to synchronize context');
     } catch (e) {
-      toast.error('Network error during isolation updates');
+      toast.error('Network error during synchronization');
     } finally {
       setIsSaving(false);
     }
@@ -105,7 +105,7 @@ export function TenantAdmin() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'agents', selectedTenantId] });
       setIsInviteOpen(false);
       inviteForm.reset();
-      toast.success('Agent access provisioned for this tenant');
+      toast.success('Staff access provisioned');
     }
   });
   const toggleAgentInQueue = (queueIdx: number, agentId: string) => {
@@ -125,7 +125,7 @@ export function TenantAdmin() {
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
             <div className="space-y-1">
               <h1 className="text-3xl font-bold tracking-tight text-slate-900">Tenant Configuration</h1>
-              <p className="text-muted-foreground text-sm">Managing logical isolation for {tenant?.name}.</p>
+              <p className="text-muted-foreground text-sm">Managing logical isolation for {tenant?.name || 'Loading...'}.</p>
             </div>
             <div className="flex gap-2">
               <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
@@ -262,20 +262,24 @@ export function TenantAdmin() {
                              <h4 className="text-[10px] font-black uppercase text-slate-400 mb-4 flex items-center gap-2">
                                 <UsersIcon className="w-3 h-3" /> Tenant Staff Access
                              </h4>
-                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                {agents.map(agent => (
-                                  <div key={agent.id} className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 transition-colors hover:bg-slate-100">
-                                    <Checkbox
-                                      id={`${q.id}-${agent.id}`}
-                                      checked={(q.assignedAgentIds || []).includes(agent.id)}
-                                      onCheckedChange={() => toggleAgentInQueue(idx, agent.id)}
-                                    />
-                                    <Label htmlFor={`${q.id}-${agent.id}`} className={cn("text-xs cursor-pointer truncate", agent.isOnline ? "text-slate-900 font-bold" : "text-slate-500")}>
-                                      {agent.name}
-                                    </Label>
-                                  </div>
-                                ))}
-                             </div>
+                             {isLoadingAgents ? (
+                               <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Loading agents...</div>
+                             ) : (
+                               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                  {agents.map(agent => (
+                                    <div key={agent.id} className="flex items-center space-x-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 transition-colors hover:bg-slate-100">
+                                      <Checkbox
+                                        id={`${q.id}-${agent.id}`}
+                                        checked={(q.assignedAgentIds || []).includes(agent.id)}
+                                        onCheckedChange={() => toggleAgentInQueue(idx, agent.id)}
+                                      />
+                                      <Label htmlFor={`${q.id}-${agent.id}`} className={cn("text-xs cursor-pointer truncate", agent.isOnline ? "text-slate-900 font-bold" : "text-slate-500")}>
+                                        {agent.name}
+                                      </Label>
+                                    </div>
+                                  ))}
+                               </div>
+                             )}
                           </div>
                         </div>
                         {q.isDeleted && <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center font-black text-rose-600 uppercase tracking-widest text-sm">Archived Queue</div>}
@@ -357,9 +361,9 @@ export function TenantAdmin() {
                    <div className="max-w-2xl space-y-6">
                       <div className="space-y-2">
                         <Label className="text-slate-900 font-bold">Client ID / Application ID</Label>
-                        <Input 
-                          placeholder="e.g. 00000000-0000-0000-0000-000000000000" 
-                          value={entraClientId} 
+                        <Input
+                          placeholder="e.g. 00000000-0000-0000-0000-000000000000"
+                          value={entraClientId}
                           onChange={e => setEntraClientId(e.target.value)}
                           className="font-mono text-xs"
                         />

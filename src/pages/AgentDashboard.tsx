@@ -20,23 +20,27 @@ import { toast } from 'sonner';
 import { useCallback } from 'react';
 export function AgentDashboard() {
   const token = useAuthStore(s => s.token);
-  const userId = useAuthStore(s => s.user?.id);
+  const user = useAuthStore(s => s.user);
   const tenant = useAuthStore(s => s.tenant);
   const selectedTenantId = useAuthStore(s => s.selectedTenantId);
   const activeId = useAuthStore(s => s.activeConversationId);
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
-  const presenceStatus = useAuthStore(s => s.user?.presenceStatus);
-  const isOnline = useAuthStore(s => s.user?.isOnline);
-  const effectiveTenantId = selectedTenantId || tenant?.id;
-  // Remove unused/incorrect contactName selector from auth store
+  const userId = user?.id;
+  const presenceStatus = user?.presenceStatus;
+  const isOnline = user?.isOnline;
+  const effectiveTenantId = selectedTenantId || tenant?.id || '';
   const [msgInput, setMsgInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', effectiveTenantId],
     queryFn: async () => {
+      if (!token || !effectiveTenantId) return [];
       const res = await fetch('/api/conversations', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': effectiveTenantId
+        }
       });
       const json = await res.json() as ApiResponse<Conversation[]>;
       return json.data ?? [];
@@ -47,8 +51,12 @@ export function AgentDashboard() {
   const { data: offlineRequests = [] } = useQuery({
     queryKey: ['offline', effectiveTenantId],
     queryFn: async () => {
+      if (!token || !effectiveTenantId) return [];
       const res = await fetch('/api/internal/offline', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': effectiveTenantId
+        }
       });
       const json = await res.json() as ApiResponse<OfflineRequest[]>;
       return json.data ?? [];
@@ -59,21 +67,21 @@ export function AgentDashboard() {
   const { data: metrics } = useQuery({
     queryKey: ['metrics', effectiveTenantId],
     queryFn: async () => {
+      if (!token || !effectiveTenantId) return null;
       const res = await fetch('/api/agent/metrics', {
-        headers: { 'Authorization': `Bearer ${token}`, 'X-Tenant-ID': effectiveTenantId }
+        headers: { 
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': effectiveTenantId
+        }
       });
       const json = await res.json() as ApiResponse<SystemMetrics>;
-      if (!json.success) {
-        console.warn('Metrics fetch failed:', json.error);
-        return { hourlyMessageVolume: [], avgResponseTime: 0, resolutionRate: 0, activeAgents: 0, totalConvs: 0 };
-      }
+      if (!json.success) return null;
       return json.data!;
     },
     refetchInterval: 30000,
     enabled: !!token && !!effectiveTenantId,
   });
   const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
-
   const refreshMe = useCallback(async () => {
     if (!token) return;
     try {
@@ -88,14 +96,14 @@ export function AgentDashboard() {
       console.error('Failed to refresh auth state:', e);
     }
   }, [token]);
-
   const presenceMutation = useMutation({
     mutationFn: async (status: PresenceStatus) => {
       const res = await fetch('/api/presence', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': effectiveTenantId
         },
         body: JSON.stringify({ status })
       });
@@ -115,7 +123,8 @@ export function AgentDashboard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'X-Tenant-ID': effectiveTenantId
         },
         body: JSON.stringify({ queueId })
       });
@@ -124,11 +133,9 @@ export function AgentDashboard() {
     onSuccess: () => {
       toast.success("Queue membership updated");
       queryClient.invalidateQueries({ queryKey: ['conversations', effectiveTenantId] });
-      queryClient.invalidateQueries({ queryKey: ['metrics', effectiveTenantId] });
       refreshMe();
     }
   });
-
   const dispatchMutation = useMutation({
     mutationFn: async (requestId: string) => {
       const res = await fetch(`/api/internal/offline/${requestId}/dispatch`, {

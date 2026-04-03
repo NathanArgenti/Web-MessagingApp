@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics, SystemMetrics } from '@shared/types';
+import type { ApiResponse, AuthPayload, Conversation, Message, User, Tenant, OfflineRequest, QueueStatus, PresenceStatus, GlobalMetrics, SystemMetrics } from '../shared/types';
 export function userRoutes(rawApp: any) {
     const app = rawApp as Hono;
     const getAuthToken = (c: any) => c.req.header('Authorization')?.split(' ')[1] || '';
@@ -13,8 +13,11 @@ export function userRoutes(rawApp: any) {
         const me = await stub.getMe(token);
         const targetTenantId = c.req.header('X-Tenant-ID');
         if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+        // Superadmins bypass isolation checks
         if (me.user.role === 'superadmin') return await next();
-        if (targetTenantId && me.user.tenantId !== targetTenantId) {
+        // Agents and Tenant Admins MUST provide a matching X-Tenant-ID
+        if (!targetTenantId || me.user.tenantId !== targetTenantId) {
+            console.error(`[SECURITY] Tenant mismatch for user ${me.user.id}. Header: ${targetTenantId}, User: ${me.user.tenantId}`);
             return c.json({ success: false, error: 'Access denied: Tenant isolation violation' }, 403);
         }
         return await next();
@@ -104,12 +107,11 @@ export function userRoutes(rawApp: any) {
     });
     app.get('/api/auth/entra/mock', async (c) => {
         const stub = getStub(c);
-        // Simulate a successful SSO login using the global admin account
         const data = await stub.login('admin@mercury.com');
         if (!data) return c.json({ success: false, error: 'SSO Simulation Failed' }, 500);
         return c.json({ success: true, data });
     });
-    app.put('/api/presence', async (c) => {
+    app.put('/api/presence', enforceTenantContext, async (c) => {
         const { status } = await c.req.json<{ status: PresenceStatus }>();
         const token = getAuthToken(c);
         const stub = getStub(c);
@@ -118,7 +120,7 @@ export function userRoutes(rawApp: any) {
         await stub.updatePresence(me.user.id, status);
         return c.json({ success: true });
     });
-    app.post('/api/conversations/:id/claim', async (c) => {
+    app.post('/api/conversations/:id/claim', enforceTenantContext, async (c) => {
         const id = c.req.param('id');
         const token = getAuthToken(c);
         const stub = getStub(c);
@@ -127,7 +129,7 @@ export function userRoutes(rawApp: any) {
         const data = await stub.claimConversation(me.user.id, id);
         return c.json({ success: !!data, data });
     });
-    app.post('/api/conversations/:id/end', async (c) => {
+    app.post('/api/conversations/:id/end', enforceTenantContext, async (c) => {
         const id = c.req.param('id');
         const stub = getStub(c);
         const data = await stub.endConversation(id);
@@ -140,7 +142,7 @@ export function userRoutes(rawApp: any) {
         const data = await stub.getAgentMetrics(tenantId);
         return c.json({ success: true, data });
     });
-    app.post('/api/agent/queues/join', async (c) => {
+    app.post('/api/agent/queues/join', enforceTenantContext, async (c) => {
         const { queueId } = await c.req.json();
         const token = getAuthToken(c);
         const stub = getStub(c);
@@ -149,7 +151,7 @@ export function userRoutes(rawApp: any) {
         await stub.joinQueue(me.user.id, queueId);
         return c.json({ success: true });
     });
-    app.post('/api/agent/queues/leave', async (c) => {
+    app.post('/api/agent/queues/leave', enforceTenantContext, async (c) => {
         const { queueId } = await c.req.json();
         const token = getAuthToken(c);
         const stub = getStub(c);
@@ -169,7 +171,6 @@ export function userRoutes(rawApp: any) {
     });
     app.post('/api/admin/agents/invite', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
-        if (!tenantId) return c.json({ success: false, error: 'Tenant context required' }, 400);
         const { email, name } = await c.req.json();
         const stub = getStub(c);
         const data = await stub.upsertUser({ email, name, role: 'agent', tenantId });
@@ -177,7 +178,6 @@ export function userRoutes(rawApp: any) {
     });
     app.get('/api/internal/offline', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
-        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const data = await stub.getOfflineRequests(tenantId);
         return c.json({ success: true, data });
@@ -185,14 +185,12 @@ export function userRoutes(rawApp: any) {
     app.post('/api/internal/offline/:id/dispatch', enforceTenantContext, async (c) => {
         const id = c.req.param('id');
         const tenantId = c.req.header('X-Tenant-ID');
-        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
         const ok = await stub.dispatchOfflineRequest(tenantId, id);
         return c.json({ success: ok });
     });
     app.put('/api/admin/settings', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
-        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const settings = await c.req.json<any>();
         const stub = getStub(c);
         await stub.updateTenantSettings(tenantId, settings);
@@ -248,9 +246,8 @@ export function userRoutes(rawApp: any) {
     });
     app.get('/api/conversations', enforceTenantContext, async (c) => {
         const tenantId = c.req.header('X-Tenant-ID');
-        if (!tenantId) return c.json({ success: false, error: 'Tenant ID required' }, 400);
         const stub = getStub(c);
-        const data = await stub.getConversations(tenantId);
+        const data = await stub.getConversations(tenantId!);
         return c.json({ success: true, data });
     });
     app.post('/api/seed', async (c) => {
@@ -279,10 +276,15 @@ export function userRoutes(rawApp: any) {
         const body = await c.req.json();
         const token = getAuthToken(c);
         const stub = getStub(c);
+        const targetTenantId = c.req.header('X-Tenant-ID');
         let message: Message;
         if (token) {
             const me = await stub.getMe(token);
             if (!me) return c.json({ success: false, error: 'Unauthorized' }, 401);
+            // Validate tenant context for agent messages
+            if (me.user.role !== 'superadmin' && targetTenantId && me.user.tenantId !== targetTenantId) {
+                 return c.json({ success: false, error: 'Tenant context mismatch' }, 403);
+            }
             message = {
                 id: crypto.randomUUID(),
                 conversationId: id,
