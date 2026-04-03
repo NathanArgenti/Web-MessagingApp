@@ -122,8 +122,22 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || !session) return;
+    
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMessage: Message = {
+      id: tempId,
+      content: input,
+      senderType: 'visitor' as const,
+      senderId: session!.visitorId,
+      timestamp: Date.now(),
+      conversationId: session!.convId,
+    };
+    
+    // Optimistic update
+    setMessages(prev => [...prev, optimisticMessage]);
     const content = input;
     setInput('');
+    
     try {
       const res = await fetch(`/api/conversations/${session.convId}/messages`, {
         method: 'POST',
@@ -131,10 +145,15 @@ export default function ChatWidget({ siteKey }: ChatWidgetProps) {
         body: JSON.stringify({ content })
       });
       const json = await res.json() as ApiResponse<Message>;
-      if (json.success) {
-        setMessages(prev => [...prev, json.data!]);
+      if (!json.success) {
+        throw new Error('Server rejected message');
       }
+      // Keep optimistic message (poll will sync real message later)
     } catch (err) {
+      // Remove optimistic message and restore input on failure
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      setInput(content);
+      toast.error('Failed to send');
       console.error("Send error", err);
     }
   };
