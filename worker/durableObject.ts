@@ -215,12 +215,12 @@ export class GlobalDurableObject extends DurableObject {
     }
     async endConversation(conversationId: string): Promise<Conversation | null> {
         const tenants = await this.getAllTenants();
-        for (const t of tenants) {
-            const convs = await this.getConversations(t.id);
+        for (const tenant of tenants) {
+            const convs = await this.getConversations(tenant.id);
             const idx = convs.findIndex(c => c.id === conversationId);
             if (idx !== -1) {
                 convs[idx] = { ...convs[idx], status: 'ended', updatedAt: Date.now() };
-                await this.setStorage(`tenant:${t.id}:conversations`, convs);
+                await this.setStorage(`tenant:${tenant.id}:conversations`, convs);
                 return convs[idx];
             }
         }
@@ -256,16 +256,21 @@ export class GlobalDurableObject extends DurableObject {
     }
     async getQueueStatus(queueId?: string): Promise<QueueStatus> {
         if (!queueId) return { available: false, agentsOnline: 0, capacityUsed: 0, capacityMax: 10, isFull: true };
-        const users = (await this.getStorage<User[]>('users')) || [];
         const tenants = await this.getAllTenants();
         let targetQueue: Queue | undefined;
-        for (const t of tenants) {
-            targetQueue = t.queues.find(q => q.id === queueId);
-            if (targetQueue) break;
+        let tenantId = '';
+        for (const tenant of tenants) {
+            targetQueue = tenant.queues.find(q => q.id === queueId);
+            if (targetQueue) {
+                tenantId = tenant.id;
+                break;
+            }
         }
         if (!targetQueue) return { available: false, agentsOnline: 0, capacityUsed: 0, capacityMax: 10, isFull: true };
-        const onlineAgents = users.filter(u => u.isOnline && u.tenantId === targetQueue.tenantId && targetQueue?.assignedAgentIds?.includes(u.id));
-        const convs = await this.getConversations(targetQueue.tenantId);
+
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const onlineAgents = users.filter(u => u.isOnline && u.tenantId === tenantId && targetQueue!.assignedAgentIds?.includes(u.id));
+        const convs = await this.getConversations(tenantId);
         const activeConvs = convs.filter(c => c.queueId === queueId && c.status === 'owned');
         return {
             available: onlineAgents.length > 0,
@@ -314,29 +319,33 @@ export class GlobalDurableObject extends DurableObject {
         };
     }
     async joinQueue(userId: string, queueId: string): Promise<void> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const user = users.find(u => u.id === userId);
+        if (!user?.tenantId) return;
         const tenants = await this.getAllTenants();
-        for (const t of tenants) {
-            const qIdx = t.queues.findIndex(q => q.id === queueId);
-            if (qIdx !== -1) {
-                const ids = t.queues[qIdx].assignedAgentIds || [];
-                if (!ids.includes(userId)) {
-                    t.queues[qIdx].assignedAgentIds = [...ids, userId];
-                    await this.setStorage('tenants', tenants);
-                }
-                return;
+        const tenant = tenants.find(t => t.id === user.tenantId);
+        if (!tenant) return;
+        const qIdx = tenant.queues.findIndex(q => q.id === queueId);
+        if (qIdx !== -1) {
+            const ids = tenant.queues[qIdx].assignedAgentIds || [];
+            if (!ids.includes(userId)) {
+                tenant.queues[qIdx].assignedAgentIds = [...ids, userId];
+                await this.setStorage('tenants', tenants);
             }
         }
     }
     async leaveQueue(userId: string, queueId: string): Promise<void> {
+        const users = (await this.getStorage<User[]>('users')) || [];
+        const user = users.find(u => u.id === userId);
+        if (!user?.tenantId) return;
         const tenants = await this.getAllTenants();
-        for (const t of tenants) {
-            const qIdx = t.queues.findIndex(q => q.id === queueId);
-            if (qIdx !== -1) {
-                const ids = t.queues[qIdx].assignedAgentIds || [];
-                t.queues[qIdx].assignedAgentIds = ids.filter(id => id !== userId);
-                await this.setStorage('tenants', tenants);
-                return;
-            }
+        const tenant = tenants.find(t => t.id === user.tenantId);
+        if (!tenant) return;
+        const qIdx = tenant.queues.findIndex(q => q.id === queueId);
+        if (qIdx !== -1) {
+            const ids = tenant.queues[qIdx].assignedAgentIds || [];
+            tenant.queues[qIdx].assignedAgentIds = ids.filter(id => id !== userId);
+            await this.setStorage('tenants', tenants);
         }
     }
 }

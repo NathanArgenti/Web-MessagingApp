@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { toast } from 'sonner';
+import { useCallback } from 'react';
 export function AgentDashboard() {
   const token = useAuthStore(s => s.token);
   const userId = useAuthStore(s => s.user?.id);
@@ -26,7 +27,7 @@ export function AgentDashboard() {
   const setActiveId = useAuthStore(s => s.setActiveConversationId);
   const presenceStatus = useAuthStore(s => s.user?.presenceStatus);
   const isOnline = useAuthStore(s => s.user?.isOnline);
-  const contactName = useAuthStore(s => s.user?.name);
+  // Remove unused/incorrect contactName selector from auth store
   const [msgInput, setMsgInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -67,6 +68,22 @@ export function AgentDashboard() {
     enabled: !!token && !!selectedTenantId,
   });
   const { messages, sendMessage, claimConversation, endConversation } = useChat(activeId);
+
+  const refreshMe = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const json = await res.json() as ApiResponse<{user: any, tenant: any, availableTenants: any[]}>;
+      if (!json.success || !json.data) return;
+      useAuthStore.getState().setAuth(json.data.user, token, json.data.tenant, json.data.availableTenants || []);
+    } catch (e) {
+      console.error('Failed to refresh auth state:', e);
+    }
+  }, [token]);
+
   const presenceMutation = useMutation({
     mutationFn: async (status: PresenceStatus) => {
       const res = await fetch('/api/presence', {
@@ -82,7 +99,9 @@ export function AgentDashboard() {
     },
     onSuccess: () => {
       toast.success('Presence updated');
-      queryClient.invalidateQueries();
+      queryClient.invalidateQueries({ queryKey: ['conversations', selectedTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['metrics', selectedTenantId] });
+      refreshMe();
     }
   });
   const membershipMutation = useMutation({
@@ -99,9 +118,12 @@ export function AgentDashboard() {
     },
     onSuccess: () => {
       toast.success("Queue membership updated");
-      queryClient.invalidateQueries();
+      queryClient.invalidateQueries({ queryKey: ['conversations', selectedTenantId] });
+      queryClient.invalidateQueries({ queryKey: ['metrics', selectedTenantId] });
+      refreshMe();
     }
   });
+
   const dispatchMutation = useMutation({
     mutationFn: async (requestId: string) => {
       const res = await fetch(`/api/internal/offline/${requestId}/dispatch`, {
